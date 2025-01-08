@@ -1,6 +1,6 @@
 # %%
-from langgraph.graph import StateGraph, END
-from typing import TypedDict, List, Dict, Annotated
+from langgraph.graph import StateGraph, END, START
+from typing import TypedDict, List, Dict, Literal
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import tool
@@ -8,192 +8,175 @@ from langchain_openai import ChatOpenAI
 from config import BASE_URL
 from dotenv import load_dotenv
 import os
-from tools.data_collection import (
-    fetch_repo_metrics, analyze_code_quality, get_dependencies,
-    get_contributor_metrics, analyze_issues_prs, get_activity_metrics
-)
-from tools.comparison import (
-    assess_project_impact,
-    compare_project_metrics,
-    calculate_relative_weights,
-    normalize_comparison_scores
-)
-from tools.validation import (
-    validate_transitivity, verify_weight_distribution,
-    calibrate_with_historical, explain_weights
-)
 
 load_dotenv()
 api_key = os.getenv('OPENAI_API_KEY')
 
-# Define core state schema with compiler-style planning
+# Define core state schema
 class FundingState(TypedDict):
-    messages: List[BaseMessage]
-    repo_data: Dict  
-    comparisons: List[Dict]
-    current_phase: str
-    execution_plan: List[Dict]
-    results: Dict
+    """State for the funding comparison workflow"""
+    messages: List[BaseMessage]  # Chat history
+    repo_data: Dict  # Repository metrics and data
+    current_phase: Literal["data_collection", "comparison", "validation"]
+    results: Dict  # Analysis results and explanations
 
-
-# 1. Data Collection & Analysis Team
-class DataCollectionTeam:
-    def __init__(self):
-        self.model_collector = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        self.model_community = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        
-        self.agents = {
-            "metrics_collector": create_react_agent(self.model_collector, [
-                fetch_repo_metrics,
-                analyze_code_quality,
-                get_dependencies
-            ]),
-            "community_analyzer": create_react_agent(self.model_community, [
-                get_contributor_metrics,
-                analyze_issues_prs,
-                get_activity_metrics
-            ])
-        }
+# 1. Data Collection Node
+def create_data_collection_node():
+    """Creates the data collection node to analyze repository metrics"""
+    model = ChatOpenAI(model="gpt-4", base_url=BASE_URL, api_key=api_key)
     
-    async def collect_data(self, state: FundingState) -> FundingState:
-        """Collect comprehensive data about repositories"""
-        repo_a = state["repo_data"]["repo_a"]
+    # Create agent for repository analysis
+    analysis_agent = create_react_agent(
+        model,
+        tools=[
+            # Tool definitions would go here
+            tool(lambda x: {"stars": 100, "forks": 50})(lambda x: "Fetch repo metrics"),
+            tool(lambda x: {"quality_score": 0.8})(lambda x: "Analyze code quality"),
+            tool(lambda x: {"contributors": 20})(lambda x: "Get contributor metrics"),
+        ],
+        system_message="""You are a repository analysis specialist. Analyze GitHub repositories 
+        by examining code quality, community metrics, and development activity."""
+    )
+
+    def data_collection_node(state: FundingState):
+        """Collect and analyze repository data"""
+        repo_a = state["repo_data"]["repo_a"] 
         repo_b = state["repo_data"]["repo_b"]
         
-        # Collect metrics in parallel
-        metrics_a = await self.agents["metrics_collector"].acollect(repo_a)
-        metrics_b = await self.agents["metrics_collector"].acollect(repo_b)
+        # Analyze both repositories
+        analysis_a = analysis_agent.invoke({
+            "messages": state["messages"],
+            "repo": repo_a
+        })
         
-        # Analyze community aspects
-        community_a = await self.agents["community_analyzer"].acollect(repo_a) 
-        community_b = await self.agents["community_analyzer"].acollect(repo_b)
-        
+        analysis_b = analysis_agent.invoke({
+            "messages": state["messages"],
+            "repo": repo_b
+        })
+
         return {
             **state,
             "repo_data": {
-                "repo_a": {**metrics_a, **community_a},
-                "repo_b": {**metrics_b, **community_b}
-            }
+                "repo_a": analysis_a,
+                "repo_b": analysis_b
+            },
+            "current_phase": "comparison"
         }
+    
+    return data_collection_node
 
-# 2. Comparison & Analysis Team  
-class ComparisonTeam:
-    def __init__(self):
-        self.model_impact = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        self.model_weight = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        self.agents = {
-            "impact_analyzer": create_react_agent(self.model_impact, [
-                assess_project_impact,
-                compare_project_metrics
-            ]),
-            "weight_calculator": create_react_agent(self.model_weight, [
-                calculate_relative_weights,
-                normalize_comparison_scores
-            ])
-        }
+# 2. Comparison Node  
+def create_comparison_node():
+    """Creates the node for comparing repositories"""
+    model = ChatOpenAI(model="gpt-4", base_url=BASE_URL, api_key=api_key)
+    
+    comparison_agent = create_react_agent(
+        model,
+        tools=[
+            # Tool definitions would go here
+            tool(lambda x: {"relative_impact": 0.7})(lambda x: "Compare impact"),
+            tool(lambda x: {"relative_quality": 0.6})(lambda x: "Compare quality"),
+        ],
+        system_message="""You are a project comparison specialist. Compare repositories 
+        based on their metrics and determine their relative strengths."""
+    )
 
-    async def compare_repos(self, state: FundingState) -> FundingState:
-        """Generate relative weights between repositories"""
-        # Analyze impact and importance
-        impact_scores = await self.agents["impact_analyzer"].aanalyze(
-            state["repo_data"]
-        )
+    def comparison_node(state: FundingState):
+        """Generate direct comparison between repositories"""
+        comparison = comparison_agent.invoke({
+            "messages": state["messages"],
+            "repo_data": state["repo_data"]
+        })
         
-        # Calculate normalized weights
-        weights = await self.agents["weight_calculator"].acalculate(
-            impact_scores
-        )
+        # Calculate relative weights between repos (0-1 scale)
+        repo_a_weight = comparison["relative_impact"] * 0.6 + comparison["relative_quality"] * 0.4
+        repo_b_weight = 1 - repo_a_weight
         
         return {
             **state,
             "results": {
-                "relative_weights": weights,
-                "impact_analysis": impact_scores
-            }
+                "weights": {
+                    "repo_a": repo_a_weight,
+                    "repo_b": repo_b_weight
+                },
+                "comparison_details": comparison
+            },
+            "current_phase": "validation" 
         }
+    
+    return comparison_node
 
-# 3. Validation & Calibration Team
-class ValidationTeam:
-    def __init__(self):
-        self.model_consistency = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        self.model_calibration = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-        self.agents = {
-            "consistency_checker": create_react_agent(self.model_consistency, [
-                validate_transitivity,
-                verify_weight_distribution
-            ]),
-            "calibration_agent": create_react_agent(self.model_calibration, [
-                calibrate_with_historical,
-                explain_weights
-            ])
-        }
+# 3. Validation Node
+def create_validation_node():
+    """Creates the validation node to verify comparison results"""
+    model = ChatOpenAI(model="gpt-4", base_url=BASE_URL, api_key=api_key)
+    
+    validation_agent = create_react_agent(
+        model,
+        tools=[
+            # Tool definitions would go here
+            tool(lambda x: {"is_valid": True})(lambda x: "Validate weights"),
+            tool(lambda x: {"explanation": "..."})(lambda x: "Generate explanation"),
+        ],
+        system_message="""You are a validation specialist. Verify that repository 
+        comparisons are reasonable and well-justified."""
+    )
 
-    async def validate_results(self, state: FundingState) -> FundingState:
-        """Validate and calibrate the comparison results"""
-        # Check consistency
-        consistency_result = await self.agents["consistency_checker"].avalidate(
-            state["results"]
-        )
+    def validation_node(state: FundingState):
+        """Validate the comparison results"""
+        validation = validation_agent.invoke({
+            "messages": state["messages"],
+            "results": state["results"]
+        })
         
-        # Calibrate if needed
-        if consistency_result["needs_calibration"]:
-            calibrated_weights = await self.agents["calibration_agent"].acalibrate(
-                state["results"]
-            )
-            state["results"]["relative_weights"] = calibrated_weights
-            
-        # Generate explanation
-        explanation = await self.agents["calibration_agent"].aexplain(
-            state["results"]
-        )
+        needs_review = not validation["is_valid"]
         
         return {
             **state,
             "results": {
                 **state["results"],
-                "explanation": explanation,
-                "validation": consistency_result
-            }
+                "validation": validation,
+                "final_explanation": validation["explanation"]
+            },
+            "current_phase": "comparison" if needs_review else "complete"
         }
-
-# Graph Implementation
-def create_comparison_graph():
-    graph = StateGraph(FundingState)
     
-    # Create teams
-    data_team = DataCollectionTeam()
-    comparison_team = ComparisonTeam()
-    validation_team = ValidationTeam()
+    return validation_node
+
+def create_funding_graph():
+    """Creates the repository comparison workflow graph"""
+    
+    # Initialize graph
+    workflow = StateGraph(FundingState)
     
     # Add nodes
-    graph.add_node("collect_data", data_team.collect_data)
-    graph.add_node("compare_repos", comparison_team.compare_repos)
-    graph.add_node("validate_results", validation_team.validate_results)
+    workflow.add_node("collect_data", create_data_collection_node())
+    workflow.add_node("compare", create_comparison_node()) 
+    workflow.add_node("validate", create_validation_node())
+
+    # Add edges
+    workflow.add_edge(START, "collect_data")
+    workflow.add_edge("collect_data", "compare")
+    workflow.add_edge("compare", "validate")
     
-    # Define edges - add START edge
-    graph.set_entry_point("collect_data")
-    
-    graph.add_edge("collect_data", "compare_repos")
-    graph.add_edge("compare_repos", "validate_results")
-    
-    # Add conditional edge for recalibration if needed
-    def needs_recalibration(state):
-        return state["results"]["validation"]["needs_calibration"]
+    # Add conditional edge for review if needed
+    def needs_review(state: FundingState):
+        return state["current_phase"] == "comparison"
         
-    graph.add_conditional_edges(
-        "validate_results",
-        needs_recalibration,
+    workflow.add_conditional_edges(
+        "validate",
+        needs_review,
         {
-            True: "compare_repos",
-            False: END
+            True: "compare",  # Review needed
+            False: END  # Complete
         }
     )
     
-    return graph.compile()
+    return workflow.compile()
 
-# Example Usage
 async def compare_repositories(repo_a: str, repo_b: str):
-    graph = create_comparison_graph()
+    """Compare two repositories and determine their relative weights"""
+    graph = create_funding_graph()
     
     initial_state = {
         "messages": [],
@@ -201,14 +184,22 @@ async def compare_repositories(repo_a: str, repo_b: str):
             "repo_a": repo_a,
             "repo_b": repo_b
         },
-        "comparisons": [],
         "current_phase": "data_collection",
-        "execution_plan": [],
         "results": {}
     }
     
-    result = await graph.arun(initial_state)
-    return result["results"]["relative_weights"]
+    # Run comparison workflow
+    for event in graph.stream(initial_state):
+        phase = event.get("current_phase", "")
+        print(f"Phase: {phase}")
+        
+        if phase == "complete":
+            results = event["results"]
+            print(f"\nFinal weights:")
+            print(f"Repo A: {results['weights']['repo_a']:.2f}")
+            print(f"Repo B: {results['weights']['repo_b']:.2f}")
+            print(f"\nExplanation: {results['final_explanation']}")
+            return results
 
 
 
