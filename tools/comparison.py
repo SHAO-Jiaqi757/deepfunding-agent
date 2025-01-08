@@ -26,10 +26,17 @@ def assess_project_impact(repo_data: Dict) -> Dict:
             - "community_health": The assessed community health score.
             - "technical_value": The evaluated technical value score.
     """
+    # Ensure repo_data is a dictionary and has the expected structure
+    if not isinstance(repo_data, dict):
+        repo_data = {}
+    
+    # Extract metrics data if it exists in a nested structure
+    metrics_data = repo_data.get("metrics", repo_data)
+    
     return {
-        "ecosystem_impact": calculate_ecosystem_impact(repo_data),
-        "community_health": assess_community_health(repo_data),
-        "technical_value": evaluate_technical_value(repo_data)
+        "ecosystem_impact": calculate_ecosystem_impact(metrics_data),
+        "community_health": assess_community_health(metrics_data),
+        "technical_value": evaluate_technical_value(metrics_data)
     }
 
 @tool
@@ -89,3 +96,7 @@ def normalize_comparison_scores(scores: Dict) -> Dict:
         "normalized_scores": normalized,
         "scaling_factor": 1.0 / total if total > 0 else 0
     } 
+
+    
+if __name__ == "__main__":
+    print(assess_project_impact(MOCK_REPO_DATA))

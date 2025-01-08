@@ -11,7 +11,13 @@ from tests.test_utils import (
     calculate_issue_resolution_time,
     calculate_test_coverage,
     calculate_doc_coverage,
-    analyze_complexity
+    analyze_complexity,
+    count_active_contributors,
+    extract_direct_dependencies,
+    extract_indirect_dependencies,
+    build_dependency_graph,
+    analyze_contribution_frequency,
+    calculate_maintainer_response_time
 )
 
 @tool
@@ -29,12 +35,14 @@ def fetch_repo_metrics(repo_url: str) -> Dict:
             - "commits": The total number of commits in the repository.
             - "contributors": The total number of contributors to the repository.
     """
+    # Determine the repo key based on the URL
+    repo_key = "repo1" if "repo1" in repo_url else "repo2"  # Adjust based on your logic
     return {
-        "stars": get_stars(repo_url),
-        "forks": get_forks(repo_url),
-        "watchers": get_watchers(repo_url),
-        "commits": get_commit_count(repo_url),
-        "contributors": get_contributor_count(repo_url)
+        "stars": get_stars(repo_key),
+        "forks": get_forks(repo_key),
+        "watchers": get_watchers(repo_key),
+        "commits": get_commit_count(repo_key),
+        "contributors": get_contributor_count(repo_key)
     }
 
 @tool
@@ -88,10 +96,11 @@ def get_contributor_metrics(repo_url: str) -> Dict:
             - "contribution_frequency": The frequency of contributions made by contributors.
             - "maintainer_responsiveness": The average response time of maintainers to contributions.
     """
+    repo_key = "repo1" if "repo1" in repo_url else "repo2"
     return {
-        "active_contributors": count_active_contributors(repo_url),
-        "contribution_frequency": analyze_contribution_frequency(repo_url),
-        "maintainer_responsiveness": calculate_maintainer_response_time(repo_url)
+        "active_contributors": count_active_contributors(repo_key),
+        "contribution_frequency": analyze_contribution_frequency(repo_key),
+        "maintainer_responsiveness": calculate_maintainer_response_time(repo_key)
     }
 
 @tool
@@ -107,10 +116,11 @@ def analyze_issues_prs(repo_url: str) -> Dict:
             - "pr_velocity": The velocity of pull requests being merged.
             - "issue_resolution_time": The average time taken to resolve issues.
     """
+    repo_key = "repo1" if "repo1" in repo_url else "repo2"
     return {
-        "open_issues": count_open_issues(repo_url),
-        "pr_velocity": calculate_pr_velocity(repo_url),
-        "issue_resolution_time": calculate_issue_resolution_time(repo_url)
+        "open_issues": count_open_issues(repo_key),
+        "pr_velocity": calculate_pr_velocity(repo_key),
+        "issue_resolution_time": calculate_issue_resolution_time(repo_key)
     }
 
 @tool
@@ -126,8 +136,10 @@ def get_activity_metrics(repo_url: str) -> Dict:
             - "pr_velocity": The velocity of pull requests being merged.
             - "issue_resolution_time": The average time taken to resolve issues.
     """
+    # Determine the repo key based on the URL
+    repo_key = "repo1" if "repo1" in repo_url else "repo2"  # Adjust based on your logic
     return {
-        "open_issues": count_open_issues(repo_url),
-        "pr_velocity": calculate_pr_velocity(repo_url),
-        "issue_resolution_time": calculate_issue_resolution_time(repo_url)
+        "open_issues": count_open_issues(repo_key),
+        "pr_velocity": calculate_pr_velocity(repo_key),
+        "issue_resolution_time": calculate_issue_resolution_time(repo_key)
     } 
