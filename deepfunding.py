@@ -122,17 +122,57 @@ def create_analysis_node():
 
     def analysis_node(state: ComparisonState):
         """Compare repositories and calculate relative weights"""
-        analysis_results = analysis_agent.invoke({
+        # First assess impact for each repo individually
+        repo_a_impact = analysis_agent.invoke({
+            "messages": state["messages"] + [
+                SystemMessage(content=f"Analyze impact for repository: {state['repo_a']['url']}")
+            ],
+            "input_data": {
+                "repo_data": state["repo_a"]["metrics"]  # Pass the metrics data
+            }
+        })
+        
+        repo_b_impact = analysis_agent.invoke({
+            "messages": state["messages"] + [
+                SystemMessage(content=f"Analyze impact for repository: {state['repo_b']['url']}")
+            ],
+            "input_data": {
+                "repo_data": state["repo_b"]["metrics"]  # Pass the metrics data
+            }
+        })
+        
+        # Then compare the repositories
+        comparison_results = analysis_agent.invoke({
             "messages": state["messages"] + [
                 SystemMessage(content=f"Compare repositories: {state['repo_a']['url']} and {state['repo_b']['url']}")
             ],
-            "repo_a": state["repo_a"],
-            "repo_b": state["repo_b"]
+            "input_data": {
+                "repo_a": state["repo_a"]["metrics"],  # Pass the metrics data
+                "repo_b": state["repo_b"]["metrics"]   # Pass the metrics data
+            }
+        })
+        
+        # Calculate final weights
+        weights = analysis_agent.invoke({
+            "messages": state["messages"] + [
+                SystemMessage(content="Calculate relative weights based on impact scores")
+            ],
+            "input_data": {
+                "impact_scores": {
+                    "repo_a": repo_a_impact,
+                    "repo_b": repo_b_impact
+                }
+            }
         })
 
         return {
             **state,
-            "analysis": analysis_results,
+            "analysis": {
+                "repo_a_impact": repo_a_impact,
+                "repo_b_impact": repo_b_impact,
+                "comparison": comparison_results,
+                "weights": weights
+            },
             "phase": "validate"
         }
 
@@ -299,7 +339,7 @@ async def main():
             repo_a_key,
             repo_b_key,
             trace=True,
-            visualize=True
+            visualize=False
         )
         
         if not results:
