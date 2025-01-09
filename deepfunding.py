@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import Annotated, Dict, List, Literal, TypedDict
+from typing import Annotated, Dict, List, Literal, TypedDict, Optional
+import json
 
 from dotenv import load_dotenv
 from IPython.display import Image
@@ -13,6 +14,7 @@ from langsmith import Client
 from pydantic import BaseModel, Field
 
 from tests.test_utils import MOCK_REPO_DATA  # Import the mock data
+from prompts.analyzer import PROJECT_ANALYZER_PROMPT, FUNDING_STRATEGIST_PROMPT, COMMUNITY_ADVOCATE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +99,15 @@ def create_metrics_node():
 
         logger.info("Metrics collection complete")
         return {
+            "messages": state["messages"] + [
+                HumanMessage(content=repo_a_result["messages"][-1].content, name="metrics_collector"),
+                HumanMessage(content=repo_b_result["messages"][-1].content, name="metrics_collector")
+            ],
             "repo_a": {
                 **state["repo_a"],
                     "metrics": HumanMessage(content=repo_a_result["messages"][-1].content, name="metrics_collector")
                 },
-                "repo_b": {
+            "repo_b": {
                     **state["repo_b"],
                     "metrics": HumanMessage(
                         content=repo_b_result["messages"][-1].content,
@@ -114,118 +120,213 @@ def create_metrics_node():
     return metrics_node
 
 
-def create_analysis_node():
-    """Creates node for comparative analysis"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-
-    analysis_agent = create_react_agent(
-        model,
-        tools=[],
-        state_modifier=SystemMessage(
-            content="You are a comparison specialist. Compare repositories and determine their relative strengths. \
-            Note that the related weights should be sum to 1."
-        ),
-    )
-
-    def analysis_node(state: ComparisonState):
-        """Compare repositories and calculate relative weights"""
-        print("debug >>> : state", state)
-
-        repo_a_result = analysis_agent.invoke({
-            "messages": state["messages"] + [
-                SystemMessage(content=f"Analyze impact for repository: {state['repo_a']['url']}"),
-                state["repo_a"]["metrics"]
-            ]
-        })
-
-        repo_b_result = analysis_agent.invoke({
-            "messages": state["messages"] + [
-                SystemMessage(content=f"Analyze impact for repository: {state['repo_b']['url']}"), 
-                state["repo_b"]["metrics"]
-            ]
-        })
-        
-
-        # Calculate final weights
-        weights_result = analysis_agent.invoke({
-            "messages": state["messages"] + [
-                SystemMessage(content=f"Calculate relative weights (two float numbers a and b) for the two repositories. \
-                    The final output is two float numbers that sum to 1.0. \
-                    Example ouput: The relative wight for {state['repo_a']['url']} is a, the relative wight for {state['repo_b']['url']} is b."
-                    ),
-                    HumanMessage(
-                        content=repo_a_result["messages"][-1].content, name="analyzer"
-                    ),
-                    HumanMessage(
-                        content=repo_b_result["messages"][-1].content, name="analyzer"
-                    ),
-                ]
-            }
-        )
-
-        return {
-            "analysis": {
-                "repo_a": HumanMessage(content=repo_a_result["messages"][-1].content, name="analyzer"),
-                    "repo_b": HumanMessage(content=repo_b_result["messages"][-1].content, name="analyzer"),
-                    "weights": HumanMessage(content=weights_result["messages"][-1].content, name="analyzer")
-                },
-            "phase": "validate"
-        }
-
-    return analysis_node
-
-
-def create_validation_node():
-    """Creates node for validating comparison results"""
-
+def create_supervisor_node():
+    """Creates the supervisor node to orchestrate between analyzers"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
     
-    def validation_node(state: ComparisonState):
-        """Validate analysis results and provide explanation"""
+    # Remove FINISH from options since validator controls completion
+    members = ["project_analyzer", "funding_strategist", "community_advocate", "validator"]
+    
+    system_prompt = (
+        "You are a supervisor tasked with managing analysis between the"
+        f" following specialists: {members}. Given the repository metrics"
+        " and current analysis state, determine which specialist should analyze next."
+        " Once all specialists have provided their analysis, route to the validator"
+        " for verification."
+    )
+    
+    class Router(TypedDict):
+        """Worker to route to next."""
+        next: Literal[*members]
+    
+    def supervisor_node(state: ComparisonState) -> Command[Literal[*members]]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ] + state["messages"]
+        
+        # Check if all analyzers have contributed
+        analyzer_names = ["project_analyzer", "funding_strategist", "community_advocate"]
+        all_analyzed = all(
+            any(msg.name == name for msg in state["messages"]) 
+            for name in analyzer_names
+        )
+        
+        # If all have analyzed but not validated, force route to validator
+        if all_analyzed and not any(msg.name == "validator" for msg in state["messages"]):
+            return Command(goto="validator")
+            
+        response = model.with_structured_output(Router).invoke(messages)
+        return Command(goto=response["next"])
+        
+    return supervisor_node
 
+
+def create_project_analyzer_node():
+    """Creates node for project analysis"""
+    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    
+    analyzer = create_react_agent(
+        model,
+        tools=[],
+        state_modifier=SystemMessage(content=PROJECT_ANALYZER_PROMPT)
+    )
+    
+    def project_analyzer_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
+        result = analyzer.invoke(state)
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(content=f'Project Analyzer: {result["messages"][-1].content}', name="project_analyzer")
+                ], 
+                "phase": "analyze"
+            },
+            goto="supervisor"
+        )
+        
+    return project_analyzer_node
+
+
+def create_funding_strategist_node():
+    """Creates node for funding strategy analysis"""
+    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    
+    strategist = create_react_agent(
+        model,
+        tools=[],
+        state_modifier=SystemMessage(content=FUNDING_STRATEGIST_PROMPT)
+    )
+    
+    def funding_strategist_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
+        result = strategist.invoke(state)
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(content=f'Funding Strategist: {result["messages"][-1].content}', name="funding_strategist")
+                ], 
+                "phase": "analyze"
+            },
+            goto="supervisor"
+        )
+        
+    return funding_strategist_node
+
+
+def create_community_advocate_node():
+    """Creates node for community analysis"""
+    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    
+    advocate = create_react_agent(
+        model,
+        tools=[],
+        state_modifier=SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT)
+    )
+    
+    def community_advocate_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
+        
+        result = advocate.invoke(state)
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(content=f'Community Advocate: {result["messages"][-1].content}', name="community_advocate")
+                ], 
+                "phase": "analyze"
+            },
+            goto="supervisor"
+        )
+        
+    return community_advocate_node
+
+
+def create_validator_node():
+    """Creates node for validating analysis results"""
+    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    
+    system_prompt = """You are a validation specialist responsible for ensuring the analysis is:
+    1. Comprehensive - all aspects (project health, funding strategy, community) are covered
+    2. Well-justified - conclusions are supported by data
+    3. Actionable - provides clear guidance for funding decisions
+    
+    If any issues are found, specify which analyzer should revisit their analysis.
+    Only approve completion when all criteria are fully met.
+    """
+    
+
+    def validator_node(state: ComparisonState) -> Command[Literal["supervisor", "__end__"]]:
+        
         class ValidationResult(BaseModel):
-            need_revision: bool = Field(
-                description=f"Whether the analysis needs revision for repositories"
+            is_valid: bool = Field(description="Whether the analysis is valid and complete")
+            revision_needed: Optional[Literal["project_analyzer", "funding_strategist", "community_advocate"]] = Field(
+                description="Which analyzer needs to revise their analysis, if any"
             )
-            weight_a: float = Field(
-                description=f"The weight of the first repository {state['repo_a']['url']}"
+            explanation: str = Field(description="Explanation of validation result or needed revisions")
+            weight_a: Optional[float] = Field(
+                description=f"Final validated weight for {state['repo_a']['url']}"
             )
-            weight_b: float = Field(
-                description=f"The weight of the second repository {state['repo_b']['url']}"
-            )
-            explanation: str = Field(
-                description=f"Explanation whether the weights are valid or not"
+            weight_b: Optional[float] = Field(
+                description=f"Final validated weight for {state['repo_b']['url']}"
             )
 
-        validation_agent = model.with_structured_output(ValidationResult)
-
-        try:
-            validation_result = validation_agent.invoke([
-                SystemMessage(content=f"Validate analysis for repositories: {state['repo_a']['url']} and {state['repo_b']['url']}"),
-                state["analysis"]["repo_a"],
-                state["analysis"]["repo_b"],
-                state["analysis"]["weights"]
-            ])
-
-            # Check if results need revision
-            needs_revision = validation_result.need_revision
-        except Exception as e:
-            raise e
-
-        return {
-            "analysis": {
-                **state["analysis"],
-                    "weights": {
-                        state["repo_a"]["url"]: validation_result.weight_a,
-                        state["repo_b"]["url"]: validation_result.weight_b,
-                    },
-                    "validation": validation_result.explanation,
-                    "final": not needs_revision,
-                },
-            "phase": "analyze" if needs_revision else "complete"
+        # Collect all analyses
+        analyses = {
+            msg.name: msg.content 
+            for msg in state["messages"] 
+            if msg.name in ["project_analyzer", "funding_strategist", "community_advocate"]
         }
-
-    return validation_node
+        
+        validation_prompt = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}")
+        ]
+        
+        result = model.with_structured_output(ValidationResult).invoke(validation_prompt)
+        
+        if result.is_valid:
+            # If valid, update state and END
+            return Command(
+                update={
+                    "messages": [
+                        HumanMessage(
+                            content=json.dumps({
+                                "validation": result.explanation,
+                                "weights": {
+                                    state["repo_a"]["url"]: result.weight_a,
+                                    state["repo_b"]["url"]: result.weight_b
+                                }
+                            }),
+                            name="validator"
+                        )
+                    ],
+                    "analysis": {
+                        "weights": {
+                            state["repo_a"]["url"]: result.weight_a,
+                            state["repo_b"]["url"]: result.weight_b
+                        },
+                        "validation": result.explanation,
+                        "final": True
+                    },
+                    "phase": "complete"
+                },
+                goto=END  # Validator decides to end the process
+            )
+        else:
+            # If invalid, update state and return to supervisor for revision
+            return Command(
+                update={
+                    "messages": [
+                        HumanMessage(
+                            content=json.dumps({
+                                "validation": result.explanation,
+                                "revision_needed": result.revision_needed
+                            }),
+                            name="validator"
+                        )
+                    ],
+                    "phase": "analyze"
+                },
+                goto="supervisor"  # Return to supervisor to route to appropriate analyzer
+            )
+    
+    return validator_node
 
 
 def create_comparison_graph():
@@ -234,23 +335,19 @@ def create_comparison_graph():
 
     # Add nodes
     workflow.add_node("metrics_collector", create_metrics_node())
-    workflow.add_node("analyzer", create_analysis_node())
-    workflow.add_node("validator", create_validation_node())
+    workflow.add_node("supervisor", create_supervisor_node())
+    workflow.add_node("project_analyzer", create_project_analyzer_node())
+    workflow.add_node("funding_strategist", create_funding_strategist_node()) 
+    workflow.add_node("community_advocate", create_community_advocate_node())
+    workflow.add_node("validator", create_validator_node())
 
     # Add edges
     workflow.add_edge(START, "metrics_collector")
-    workflow.add_edge("metrics_collector", "analyzer")
-    workflow.add_edge("analyzer", "validator")
-
-    # Add conditional edge for revision
-    def needs_revision(state: ComparisonState):
-        return state["phase"] == "analyze"
-
-    workflow.add_conditional_edges(
-        "validator",
-        needs_revision,
-        {True: "analyzer", False: END},  # Revise analysis  # Complete
-    )
+    workflow.add_edge("metrics_collector", "supervisor")
+    # workflow.add_edge("project_analyzer", "supervisor")
+    # workflow.add_edge("funding_strategist", "supervisor")
+    # workflow.add_edge("community_advocate", "supervisor")
+    # workflow.add_edge("validator", "supervisor")
 
     return workflow.compile()
 
@@ -272,7 +369,6 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
         f.write(graph_image.data)
         print("Graph visualization saved!")
 
-    # terminate the program
     # Initialize state with mock data
     initial_state = {
         "messages": [],
@@ -284,7 +380,7 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
     print(f"Initial state: {initial_state}")
 
     try:
-        for event in graph.stream(initial_state):
+        for event in graph.stream(initial_state, config={"recursion_limit": 25}):
             print(f"Raw event: {event}")  # Debug print
 
             # Extract phase from the correct location in event
@@ -315,7 +411,7 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
                 explanation = analysis.get("validation")
 
                 results = {
-                    "relative_weights": weights,
+                    "weights": weights,
                     "explanation": explanation,
                     "trace_url": None,
                 }
@@ -359,7 +455,7 @@ def main():
         print("\nComparison Results:")
         print("==================")
 
-        weights = results.get("relative_weights", {})
+        weights = results.get("weights", {})
         if weights:
             print(f"\nRelative Weights:")
             for repo_url, weight in weights.items():
