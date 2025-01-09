@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from tests.test_utils import MOCK_REPO_DATA  # Import the mock data
 from prompts.analyzer import PROJECT_ANALYZER_PROMPT, FUNDING_STRATEGIST_PROMPT, COMMUNITY_ADVOCATE_PROMPT
-
+from prompts.validator import VALIDATOR_PROMPT
 logger = logging.getLogger(__name__)
 
 from langgraph.types import Command
@@ -241,16 +241,6 @@ def create_validator_node():
     """Creates node for validating analysis results"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
     
-    system_prompt = """You are a validation specialist responsible for ensuring the analysis is:
-    1. Comprehensive - all aspects (project health, funding strategy, community) are covered
-    2. Well-justified - conclusions are supported by data
-    3. Actionable - provides clear guidance for funding decisions
-    
-    If any issues are found, specify which analyzer should revisit their analysis.
-    Only approve completion when all criteria are fully met.
-    """
-    
-
     def validator_node(state: ComparisonState) -> Command[Literal["supervisor", "__end__"]]:
         
         class ValidationResult(BaseModel):
@@ -260,10 +250,10 @@ def create_validator_node():
             )
             explanation: str = Field(description="Explanation of validation result or needed revisions")
             weight_a: Optional[float] = Field(
-                description=f"Final validated weight for {state['repo_a']['url']}"
+                description=f"Final validated (averaged) weight for {state['repo_a']['url']}"
             )
             weight_b: Optional[float] = Field(
-                description=f"Final validated weight for {state['repo_b']['url']}"
+                description=f"Final validated (averaged) weight for {state['repo_b']['url']}"
             )
 
         # Collect all analyses
@@ -274,7 +264,7 @@ def create_validator_node():
         }
         
         validation_prompt = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=VALIDATOR_PROMPT),
             HumanMessage(content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}")
         ]
         
