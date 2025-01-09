@@ -8,3 +8,10 @@ Build AI Agent to better funding public goods, specifically for [deepfunding.org
 poetry install
 poetry run python deepfunding.py
 ```
+
+## Development
+
+Get the poetry environment path and paste it to your VsCode Python: Select Interpreter
+```bash
+poetry env info --path | pbcopy
+```
