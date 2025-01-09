@@ -5,8 +5,6 @@ from typing import Annotated, Dict, List, Literal, TypedDict
 from dotenv import load_dotenv
 from IPython.display import Image
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.tools import tool
-from langchain_core.tracers import ConsoleCallbackHandler
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -209,10 +207,7 @@ def create_validation_node():
 
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=15)
-    )
-    async def validation_node(
+    def validation_node(
         state: ComparisonState,
     ) -> Command[Literal["analyzer", END]]:
         """Validate analysis results and provide explanation"""
@@ -234,7 +229,7 @@ def create_validation_node():
         validation_agent = model.with_structured_output(ValidationResult)
 
         try:
-            validation_result = await validation_agent.ainvoke(
+            validation_result = validation_agent.invoke(
                 [
                     SystemMessage(
                         content=f"Validate analysis for repositories: {state['repo_a']['url']} and {state['repo_b']['url']}"
@@ -383,16 +378,14 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
         raise
 
 
-async def main():
+def main():
     """Main entry point"""
     # Example usage
     repo_a_key = "repo1"  # Use the key for repo A
     repo_b_key = "repo2"  # Use the key for repo B
 
     try:
-        results = await run_comparison(
-            repo_a_key, repo_b_key, trace=True, visualize=False
-        )
+        results = run_comparison(repo_a_key, repo_b_key)
 
         if not results:
             print("\nError: No results returned from comparison")
