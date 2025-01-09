@@ -1,11 +1,9 @@
-# %%
-import asyncio
-import json
 import logging
 import os
 from typing import Annotated, Dict, List, Literal, TypedDict
 
 from dotenv import load_dotenv
+from IPython.display import Image
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_core.tracers import ConsoleCallbackHandler
@@ -71,7 +69,7 @@ def create_metrics_node():
         ),
     )
 
-    async def metrics_node(state: ComparisonState) -> Command[Literal["analyzer"]]:
+    def metrics_node(state: ComparisonState) -> Command[Literal["analyzer"]]:
         """Collect metrics for both repositories"""
         logger.info(
             f"Processing repos: {state['repo_a']['url']} and {state['repo_b']['url']}"
@@ -86,7 +84,7 @@ def create_metrics_node():
             "url": state["repo_a"]["url"],
             "command": "analyze_repository",
         }
-        repo_a_result = await metrics_agent.ainvoke(repo_a_data)
+        repo_a_result = metrics_agent.invoke(repo_a_data)
 
         # Second repository
         repo_b_data = {
@@ -97,7 +95,7 @@ def create_metrics_node():
             "url": state["repo_b"]["url"],
             "command": "analyze_repository",
         }
-        repo_b_result = await metrics_agent.ainvoke(repo_b_data)
+        repo_b_result = metrics_agent.invoke(repo_b_data)
 
         logger.info("Metrics collection complete")
         return Command(
@@ -137,11 +135,11 @@ def create_analysis_node():
         ),
     )
 
-    async def analysis_node(state: ComparisonState) -> Command[Literal["validator"]]:
+    def analysis_node(state: ComparisonState) -> Command[Literal["validator"]]:
         """Compare repositories and calculate relative weights"""
         print("debug >>> : state", state)
 
-        repo_a_result = await analysis_agent.ainvoke(
+        repo_a_result = analysis_agent.invoke(
             {
                 "messages": state["messages"]
                 + [
@@ -153,7 +151,7 @@ def create_analysis_node():
             }
         )
 
-        repo_b_result = await analysis_agent.ainvoke(
+        repo_b_result = analysis_agent.invoke(
             {
                 "messages": state["messages"]
                 + [
@@ -166,7 +164,7 @@ def create_analysis_node():
         )
 
         # Calculate final weights
-        weights_result = await analysis_agent.ainvoke(
+        weights_result = analysis_agent.invoke(
             {
                 "messages": state["messages"]
                 + [
@@ -342,7 +340,7 @@ async def run_comparison(
     config = {"configurable": {"callbacks": callbacks}}
 
     try:
-        async for event in graph.astream(initial_state, config=config):
+        for event in graph.stream(initial_state, config=config):
             print(f"Raw event: {event}")  # Debug print
 
             # Extract phase from the correct location in event
@@ -399,7 +397,6 @@ async def run_comparison(
         logger.error(f"Error during comparison: {str(e)}")
         raise
 
-
 async def main():
     """Main entry point"""
     # Example usage
@@ -442,6 +439,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())
+    main()
