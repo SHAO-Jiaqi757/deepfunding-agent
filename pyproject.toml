@@ -1,0 +1,22 @@
+[project]
+name = "deepfunding-agent"
+version = "0.1.0"
+description = "AI Agent to solve funding public goods, specifically for deepfunding.org"
+authors = [
+    {name = "backdoor",email = "20609724+doutv@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "langgraph (>=0.2.61,<0.3.0)",
+    "langchain-openai (>=0.2.14,<0.3.0)",
+    "python-dotenv (>=1.0.1,<2.0.0)",
+    "ipython (>=8.31.0,<9.0.0)"
+]
+
+[tool.poetry]
+package-mode = false
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

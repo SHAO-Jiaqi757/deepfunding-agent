@@ -1,52 +1,57 @@
-# %%
-from langgraph.graph import StateGraph, END, START
-from typing import TypedDict, List, Dict, Literal, Annotated
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
-from langgraph.prebuilt import create_react_agent
-from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
-import asyncio
 import logging
-from pydantic import BaseModel, Field
+import os
+from typing import Annotated, Dict, List, Literal, TypedDict
+
+from dotenv import load_dotenv
+from IPython.display import Image
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import create_react_agent
 from langsmith import Client
-from langchain_core.tracers import ConsoleCallbackHandler
+from pydantic import BaseModel, Field
+
 from tests.test_utils import MOCK_REPO_DATA  # Import the mock data
-import json
 
-logger = logging.getLogger("deepfunding")
+logger = logging.getLogger(__name__)
 
+from langgraph.types import Command
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from tools.data_collection import (
-    fetch_repo_metrics, analyze_code_quality, get_dependencies,
-    get_contributor_metrics, analyze_issues_prs, get_activity_metrics
+    analyze_code_quality,
+    analyze_issues_prs,
+    fetch_repo_metrics,
+    get_activity_metrics,
+    get_contributor_metrics,
+    get_dependencies,
 )
 
-
 load_dotenv()
-api_key = os.getenv('OPENAI_API_KEY')
-langchain_api_key = os.getenv('LANGCHAIN_API_KEY')
-BASE_URL = os.getenv('BASE_URL')
+api_key = os.getenv("OPENAI_API_KEY")
+langchain_api_key = os.getenv("LANGCHAIN_API_KEY")
+BASE_URL = os.getenv("BASE_URL")
 
 # Add after load_dotenv()
 client = Client(api_key=langchain_api_key)
 
+
 # Define state schema for repository comparison
 class ComparisonState(TypedDict):
     """State for comparing two repositories"""
+
     messages: Annotated[List[BaseMessage], add_messages]  # Chat history with reducer
     repo_a: Dict  # First repository data
     repo_b: Dict  # Second repository data
     analysis: Dict  # Analysis results
     phase: Literal["collect", "analyze", "validate", "complete"]
 
+
 def create_metrics_node():
     """Creates node for collecting repository metrics"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
+
     metrics_agent = create_react_agent(
         model,
         [
@@ -55,28 +60,38 @@ def create_metrics_node():
             get_dependencies,
             get_contributor_metrics,
             analyze_issues_prs,
-            get_activity_metrics
+            get_activity_metrics,
         ],
-        state_modifier=SystemMessage(content="You are a repository analysis specialist. Collect and analyze repository metrics comprehensively.")
+        state_modifier=SystemMessage(
+            content="You are a repository analysis specialist. Collect and analyze repository metrics comprehensively."
+        ),
     )
 
     def metrics_node(state: ComparisonState):
         """Collect metrics for both repositories"""
-        logger.info(f"Processing repos: {state['repo_a']['url']} and {state['repo_b']['url']}")
-        
+        logger.info(
+            f"Processing repos: {state['repo_a']['url']} and {state['repo_b']['url']}"
+        )
+
         # First repository
         repo_a_data = {
-            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_a']['url']}")],
+            "messages": state["messages"]
+            + [
+                SystemMessage(content=f"Analyze repository at {state['repo_a']['url']}")
+            ],
             "url": state["repo_a"]["url"],
-            "command": "analyze_repository"
+            "command": "analyze_repository",
         }
         repo_a_result = metrics_agent.invoke(repo_a_data)
         
         # Second repository 
         repo_b_data = {
-            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_b']['url']}")],
+            "messages": state["messages"]
+            + [
+                SystemMessage(content=f"Analyze repository at {state['repo_b']['url']}")
+            ],
             "url": state["repo_b"]["url"],
-            "command": "analyze_repository"
+            "command": "analyze_repository",
         }
         repo_b_result = metrics_agent.invoke(repo_b_data)
 
@@ -88,22 +103,28 @@ def create_metrics_node():
                 },
                 "repo_b": {
                     **state["repo_b"],
-                    "metrics": HumanMessage(content=repo_b_result["messages"][-1].content, name="metrics_collector")
+                    "metrics": HumanMessage(
+                        content=repo_b_result["messages"][-1].content,
+                        name="metrics_collector",
+                    ),
                 },
             "phase": "analyze"
         }
 
     return metrics_node
 
+
 def create_analysis_node():
     """Creates node for comparative analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
+
     analysis_agent = create_react_agent(
         model,
         tools=[],
-        state_modifier=SystemMessage(content="You are a comparison specialist. Compare repositories and determine their relative strengths. \
-            Note that the related weights should be sum to 1.")
+        state_modifier=SystemMessage(
+            content="You are a comparison specialist. Compare repositories and determine their relative strengths. \
+            Note that the related weights should be sum to 1."
+        ),
     )
 
     def analysis_node(state: ComparisonState):
@@ -125,17 +146,22 @@ def create_analysis_node():
         })
         
 
-       
         # Calculate final weights
         weights_result = analysis_agent.invoke({
             "messages": state["messages"] + [
                 SystemMessage(content=f"Calculate relative weights (two float numbers a and b) for the two repositories. \
                     The final output is two float numbers that sum to 1.0. \
-                    Example ouput: The relative wight for {state['repo_a']['url']} is a, the relative wight for {state['repo_b']['url']} is b."),
-                HumanMessage(content=repo_a_result["messages"][-1].content, name="analyzer"),
-                HumanMessage(content=repo_b_result["messages"][-1].content, name="analyzer"),
-            ]
-        })
+                    Example ouput: The relative wight for {state['repo_a']['url']} is a, the relative wight for {state['repo_b']['url']} is b."
+                    ),
+                    HumanMessage(
+                        content=repo_a_result["messages"][-1].content, name="analyzer"
+                    ),
+                    HumanMessage(
+                        content=repo_b_result["messages"][-1].content, name="analyzer"
+                    ),
+                ]
+            }
+        )
 
         return {
             "analysis": {
@@ -148,6 +174,7 @@ def create_analysis_node():
 
     return analysis_node
 
+
 def create_validation_node():
     """Creates node for validating comparison results"""
 
@@ -155,13 +182,21 @@ def create_validation_node():
     
     def validation_node(state: ComparisonState):
         """Validate analysis results and provide explanation"""
-        
+
         class ValidationResult(BaseModel):
-            need_revision: bool = Field(description=f"Whether the analysis needs revision for repositories")
-            weight_a: float = Field(description=f"The weight of the first repository {state['repo_a']['url']}")
-            weight_b: float = Field(description=f"The weight of the second repository {state['repo_b']['url']}")
-            explanation: str = Field(description=f"Explanation whether the weights are valid or not")
- 
+            need_revision: bool = Field(
+                description=f"Whether the analysis needs revision for repositories"
+            )
+            weight_a: float = Field(
+                description=f"The weight of the first repository {state['repo_a']['url']}"
+            )
+            weight_b: float = Field(
+                description=f"The weight of the second repository {state['repo_b']['url']}"
+            )
+            explanation: str = Field(
+                description=f"Explanation whether the weights are valid or not"
+            )
+
         validation_agent = model.with_structured_output(ValidationResult)
 
         try:
@@ -176,27 +211,27 @@ def create_validation_node():
             needs_revision = validation_result.need_revision
         except Exception as e:
             raise e
-           
 
         return {
             "analysis": {
                 **state["analysis"],
                     "weights": {
                         state["repo_a"]["url"]: validation_result.weight_a,
-                        state["repo_b"]["url"]: validation_result.weight_b
+                        state["repo_b"]["url"]: validation_result.weight_b,
                     },
                     "validation": validation_result.explanation,
-                    "final": not needs_revision
+                    "final": not needs_revision,
                 },
             "phase": "analyze" if needs_revision else "complete"
         }
 
     return validation_node
 
+
 def create_comparison_graph():
     """Creates the repository comparison workflow graph"""
     workflow = StateGraph(ComparisonState)
-    
+
     # Add nodes
     workflow.add_node("metrics_collector", create_metrics_node())
     workflow.add_node("analyzer", create_analysis_node())
@@ -206,47 +241,35 @@ def create_comparison_graph():
     workflow.add_edge(START, "metrics_collector")
     workflow.add_edge("metrics_collector", "analyzer")
     workflow.add_edge("analyzer", "validator")
-    
+
     # Add conditional edge for revision
     def needs_revision(state: ComparisonState):
         return state["phase"] == "analyze"
-        
+
     workflow.add_conditional_edges(
         "validator",
         needs_revision,
-        {
-            True: "analyzer",  # Revise analysis
-            False: END  # Complete
-        }
+        {True: "analyzer", False: END},  # Revise analysis  # Complete
     )
-    
+
     return workflow.compile()
 
-async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, visualize: bool = False):
+
+def run_comparison(repo_a_key: str, repo_b_key: str):
     """Run repository comparison with optional tracing"""
-    
+
     # Mock data for repositories
     repo_a_data = MOCK_REPO_DATA[repo_a_key]  # Use mock data for repo A
     repo_b_data = MOCK_REPO_DATA[repo_b_key]  # Use mock data for repo B
 
-    # Set up callbacks for tracing
-    callbacks = []
-    if trace:
-        callbacks.append(ConsoleCallbackHandler())
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_PROJECT"] = "deepfunding"
-        os.environ["LANGCHAIN_API_KEY"] = langchain_api_key
-
     # Create graph
     graph = create_comparison_graph()
     print("Graph created successfully")
-    
-    # Save visualization if requested 
-    if visualize:
-        from IPython.display import Image
-        graph_image = Image(graph.get_graph().draw_mermaid_png())
-        with open('comparison_workflow.png', 'wb') as f:
-            f.write(graph_image.data)
+
+    # Save visualization if requested
+    graph_image = Image(graph.get_graph().draw_mermaid_png())
+    with open("comparison_workflow.png", "wb") as f:
+        f.write(graph_image.data)
         print("Graph visualization saved!")
 
     # terminate the program
@@ -256,26 +279,23 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
         "repo_a": {"url": f"https://github.com/{repo_a_key}", **repo_a_data},
         "repo_b": {"url": f"https://github.com/{repo_b_key}", **repo_b_data},
         "analysis": {},
-        "phase": "collect"
+        "phase": "collect",
     }
     print(f"Initial state: {initial_state}")
 
-    # Stream execution with callbacks
-    config = {"configurable": {"callbacks": callbacks}}
-    
     try:
-        async for event in graph.astream(initial_state, config=config):
+        for event in graph.stream(initial_state):
             print(f"Raw event: {event}")  # Debug print
-            
+
             # Extract phase from the correct location in event
             phase = ""
             for key in event:
                 if isinstance(event[key], dict) and "phase" in event[key]:
                     phase = event[key]["phase"]
                     break
-            
+
             print(f"Current phase: {phase}")
-            
+
             if phase == "complete":
                 print("Comparison complete!")
                 # Find the node output containing the analysis
@@ -284,64 +304,61 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
                     if isinstance(value, dict) and "analysis" in value:
                         analysis = value.get("analysis", {})
                         break
-                
+
                 if not analysis:
                     logger.warning("No analysis found in event")
                     analysis = {"error": "No analysis results"}
-                
+
                 print(f"Analysis results: {analysis}")
-                
+
                 weights = analysis.get("weights", {})
                 explanation = analysis.get("validation")
-                
+
                 results = {
                     "relative_weights": weights,
                     "explanation": explanation,
-                    "trace_url": None
+                    "trace_url": None,
                 }
-                
+
                 # Add trace URL if tracing enabled
-                if trace:
-                    try:
-                        runs = client.list_runs(
-                            project_name="deepfunding",
-                            execution_order=1, 
-                            error=False
+                try:
+                    runs = client.list_runs(
+                        project_name=os.getenv("LANGCHAIN_PROJECT"),
+                        execution_order=1,
+                        error=False,
+                    )
+                    if runs:
+                        latest_run = runs[0]
+                        results["trace_url"] = (
+                            f"https://smith.langchain.com/public/{latest_run.id}/r"
                         )
-                        if runs:
-                            latest_run = runs[0]
-                            results["trace_url"] = f"https://smith.langchain.com/public/{latest_run.id}/r"
-                    except Exception as e:
-                        logger.error(f"Error getting trace URL: {str(e)}")
-                
+                except Exception as e:
+                    logger.error(f"Error getting trace URL: {str(e)}")
+
                 print(f"Final results: {results}")
                 return results
-                
+
     except Exception as e:
         logger.error(f"Error during comparison: {str(e)}")
         raise
 
-async def main():
+
+def main():
     """Main entry point"""
     # Example usage
     repo_a_key = "repo1"  # Use the key for repo A
     repo_b_key = "repo2"  # Use the key for repo B
-    
+
     try:
-        results = await run_comparison(
-            repo_a_key,
-            repo_b_key,
-            trace=True,
-            visualize=True
-        )
-        
+        results = run_comparison(repo_a_key, repo_b_key)
+
         if not results:
             print("\nError: No results returned from comparison")
             return
-            
+
         print("\nComparison Results:")
         print("==================")
-        
+
         weights = results.get("relative_weights", {})
         if weights:
             print(f"\nRelative Weights:")
@@ -349,21 +366,21 @@ async def main():
                 print(f"{repo_url}: {weight}")
         else:
             print("\nNo weights available")
-            
+
         explanation = results.get("explanation")
         if explanation:
             print(f"\nExplanation:\n{explanation}")
         else:
             print("\nNo explanation available")
-        
+
         trace_url = results.get("trace_url")
         if trace_url:
             print(f"\nTrace URL: {trace_url}")
-            
+
     except Exception as e:
         print(f"Error: {str(e)}")
         raise
 
+
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
