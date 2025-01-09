@@ -1,40 +1,35 @@
 # %%
 from langgraph.graph import StateGraph, END, START
 from typing import TypedDict, List, Dict, Literal, Annotated
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from config import BASE_URL
 from dotenv import load_dotenv
 import os
 import asyncio
 import logging
+from pydantic import BaseModel, Field
 from langgraph.graph.message import add_messages
 from langsmith import Client
 from langchain_core.tracers import ConsoleCallbackHandler
 from tests.test_utils import MOCK_REPO_DATA  # Import the mock data
-
+import json
 logger = logging.getLogger(__name__)
+
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from tools.data_collection import (
     fetch_repo_metrics, analyze_code_quality, get_dependencies,
     get_contributor_metrics, analyze_issues_prs, get_activity_metrics
 )
-from tools.comparison import (
-    assess_project_impact,
-    compare_project_metrics,
-    calculate_relative_weights,
-    normalize_comparison_scores
-)
-from tools.validation import (
-    validate_transitivity, verify_weight_distribution,
-    calibrate_with_historical, explain_weights
-)
+
+from langgraph.types import Command
 
 load_dotenv()
 api_key = os.getenv('OPENAI_API_KEY')
 langchain_api_key = os.getenv('LANGCHAIN_API_KEY')
+BASE_URL = os.getenv('BASE_URL')
 
 # Add after load_dotenv()
 client = Client(api_key=langchain_api_key)
@@ -65,44 +60,41 @@ def create_metrics_node():
         state_modifier=SystemMessage(content="You are a repository analysis specialist. Collect and analyze repository metrics comprehensively.")
     )
 
-    def metrics_node(state: ComparisonState):
+    async def metrics_node(state: ComparisonState) -> Command[Literal["analyzer"]]:
         """Collect metrics for both repositories"""
         logger.info(f"Processing repos: {state['repo_a']['url']} and {state['repo_b']['url']}")
         
         # First repository
         repo_a_data = {
-            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_a']['url']}")],  # Include URL in messages
+            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_a']['url']}")],
             "url": state["repo_a"]["url"],
             "command": "analyze_repository"
         }
-        repo_a_metrics = metrics_agent.invoke(repo_a_data)
-        logger.info(f"Repo A metrics collected: {repo_a_metrics}")
+        repo_a_result = await metrics_agent.ainvoke(repo_a_data)
         
-        # Second repository
+        # Second repository 
         repo_b_data = {
-            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_b']['url']}")],  # Include URL in messages
+            "messages": state["messages"] + [SystemMessage(content=f"Analyze repository at {state['repo_b']['url']}")],
             "url": state["repo_b"]["url"],
             "command": "analyze_repository"
         }
-        repo_b_metrics = metrics_agent.invoke(repo_b_data)
-        logger.info(f"Repo B metrics collected: {repo_b_metrics}")
+        repo_b_result = await metrics_agent.ainvoke(repo_b_data)
 
-        # Update state with metrics
-        updated_state = {
-            **state,
-            "repo_a": {
-                **state["repo_a"],
-                "metrics": repo_a_metrics
-            },
-            "repo_b": {
-                **state["repo_b"],
-                "metrics": repo_b_metrics
-            },
-            "phase": "analyze"
-        }
-        
         logger.info("Metrics collection complete")
-        return updated_state
+        return Command(
+            update={
+                "repo_a": {
+                    **state["repo_a"],
+                    "metrics": HumanMessage(content=repo_a_result["messages"][-1].content, name="metrics_collector")
+                },
+                "repo_b": {
+                    **state["repo_b"],
+                    "metrics": HumanMessage(content=repo_b_result["messages"][-1].content, name="metrics_collector")
+                },
+                "phase": "analyze"
+            },
+            goto="analyzer"
+        )
 
     return metrics_node
 
@@ -112,103 +104,102 @@ def create_analysis_node():
     
     analysis_agent = create_react_agent(
         model,
-        [
-            assess_project_impact,
-            compare_project_metrics,
-            calculate_relative_weights
-        ],
-        state_modifier=SystemMessage(content="You are a comparison specialist. Compare repositories and determine their relative strengths.")
+        tools=[],
+        state_modifier=SystemMessage(content="You are a comparison specialist. Compare repositories and determine their relative strengths. \
+            Note that the related weights should be sum to 1.")
     )
 
-    def analysis_node(state: ComparisonState):
+    async def analysis_node(state: ComparisonState) -> Command[Literal["validator"]]:
         """Compare repositories and calculate relative weights"""
-        # First assess impact for each repo individually
-        repo_a_impact = analysis_agent.invoke({
+        print("debug >>> : state", state)
+
+        repo_a_result = await analysis_agent.ainvoke({
             "messages": state["messages"] + [
-                SystemMessage(content=f"Analyze impact for repository: {state['repo_a']['url']}")
-            ],
-            "input_data": {
-                "repo_data": state["repo_a"]["metrics"]  # Pass the metrics data
-            }
+                SystemMessage(content=f"Analyze impact for repository: {state['repo_a']['url']}"),
+                state["repo_a"]["metrics"]
+            ]
         })
         
-        repo_b_impact = analysis_agent.invoke({
+        repo_b_result = await analysis_agent.ainvoke({
             "messages": state["messages"] + [
-                SystemMessage(content=f"Analyze impact for repository: {state['repo_b']['url']}")
-            ],
-            "input_data": {
-                "repo_data": state["repo_b"]["metrics"]  # Pass the metrics data
-            }
+                SystemMessage(content=f"Analyze impact for repository: {state['repo_b']['url']}"), 
+                state["repo_b"]["metrics"]
+            ]
         })
         
-        # Then compare the repositories
-        comparison_results = analysis_agent.invoke({
-            "messages": state["messages"] + [
-                SystemMessage(content=f"Compare repositories: {state['repo_a']['url']} and {state['repo_b']['url']}")
-            ],
-            "input_data": {
-                "repo_a": state["repo_a"]["metrics"],  # Pass the metrics data
-                "repo_b": state["repo_b"]["metrics"]   # Pass the metrics data
-            }
-        })
-        
+
+       
         # Calculate final weights
-        weights = analysis_agent.invoke({
+        weights_result = await analysis_agent.ainvoke({
             "messages": state["messages"] + [
-                SystemMessage(content="Calculate relative weights based on impact scores")
-            ],
-            "input_data": {
-                "impact_scores": {
-                    "repo_a": repo_a_impact,
-                    "repo_b": repo_b_impact
-                }
-            }
+                SystemMessage(content=f"Calculate relative weights (two float numbers a and b) for the two repositories. \
+                    The final output is two float numbers that sum to 1.0. \
+                    Example ouput: The relative wight for {state['repo_a']['url']} is a, the relative wight for {state['repo_b']['url']} is b."),
+                HumanMessage(content=repo_a_result["messages"][-1].content, name="analyzer"),
+                HumanMessage(content=repo_b_result["messages"][-1].content, name="analyzer"),
+            ]
         })
 
-        return {
-            **state,
-            "analysis": {
-                "repo_a_impact": repo_a_impact,
-                "repo_b_impact": repo_b_impact,
-                "comparison": comparison_results,
-                "weights": weights
+        return Command(
+            update={
+                "analysis": {
+                    "repo_a": HumanMessage(content=repo_a_result["messages"][-1].content, name="analyzer"),
+                    "repo_b": HumanMessage(content=repo_b_result["messages"][-1].content, name="analyzer"),
+                    "weights": HumanMessage(content=weights_result["messages"][-1].content, name="analyzer")
+                },
+                "phase": "validate"
             },
-            "phase": "validate"
-        }
+            goto="validator"
+        )
 
     return analysis_node
 
 def create_validation_node():
     """Creates node for validating comparison results"""
+
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
     
-    validation_agent = create_react_agent(
-        model,
-        [verify_weight_distribution, explain_weights],
-        state_modifier=SystemMessage(content="You are a validation specialist. Verify the comparison results are reasonable and well-explained.")
-    )
-
-    def validation_node(state: ComparisonState):
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=15))
+    async def validation_node(state: ComparisonState) -> Command[Literal["analyzer", END]]:
         """Validate analysis results and provide explanation"""
-        validation_results = validation_agent.invoke({
-            "messages": state["messages"] + [
-                SystemMessage(content=f"Validate analysis for repositories: {state['repo_a']['url']} and {state['repo_b']['url']}")
-            ],
-            "analysis": state["analysis"]
-        })
-
-        # Check if results need revision
-        needs_revision = validation_results.get("needs_revision", False)
         
-        return {
-            **state,
-            "analysis": {
-                **state["analysis"],
-                "validation": validation_results,
-                "final": not needs_revision
+        class ValidationResult(BaseModel):
+            need_revision: bool = Field(description=f"Whether the analysis needs revision for repositories")
+            weight_a: float = Field(description=f"The weight of the first repository {state['repo_a']['url']}")
+            weight_b: float = Field(description=f"The weight of the second repository {state['repo_b']['url']}")
+            explanation: str = Field(description=f"Explanation whether the weights are valid or not")
+ 
+        validation_agent = model.with_structured_output(ValidationResult)
+
+        try:
+            validation_result = await validation_agent.ainvoke([
+                SystemMessage(content=f"Validate analysis for repositories: {state['repo_a']['url']} and {state['repo_b']['url']}"),
+                state["analysis"]["repo_a"],
+                state["analysis"]["repo_b"],
+                state["analysis"]["weights"]
+            ])
+
+            # Check if results need revision
+            needs_revision = validation_result.need_revision
+        except Exception as e:
+            raise e
+           
+
+        return Command(
+            update={
+                "analysis": {
+                    **state["analysis"],
+                    "weights": {
+                        state["repo_a"]["url"]: validation_result.weight_a,
+                        state["repo_b"]["url"]: validation_result.weight_b
+                    },
+                    "validation": validation_result.explanation,
+                    "final": not needs_revision
+                },
+                "phase": "analyze" if needs_revision else "complete"
             },
-            "phase": "analyze" if needs_revision else "complete"
-        }
+            goto="analyzer" if needs_revision else END
+        )
 
     return validation_node
 
@@ -217,24 +208,24 @@ def create_comparison_graph():
     workflow = StateGraph(ComparisonState)
     
     # Add nodes
-    workflow.add_node("collect_metrics", create_metrics_node())
-    workflow.add_node("analyze", create_analysis_node())
-    workflow.add_node("validate", create_validation_node())
+    workflow.add_node("metrics_collector", create_metrics_node())
+    workflow.add_node("analyzer", create_analysis_node())
+    workflow.add_node("validator", create_validation_node())
 
     # Add edges
-    workflow.add_edge(START, "collect_metrics")
-    workflow.add_edge("collect_metrics", "analyze")
-    workflow.add_edge("analyze", "validate")
+    workflow.add_edge(START, "metrics_collector")
+    workflow.add_edge("metrics_collector", "analyzer")
+    workflow.add_edge("analyzer", "validator")
     
     # Add conditional edge for revision
     def needs_revision(state: ComparisonState):
         return state["phase"] == "analyze"
         
     workflow.add_conditional_edges(
-        "validate",
+        "validator",
         needs_revision,
         {
-            True: "analyze",  # Revise analysis
+            True: "analyzer",  # Revise analysis
             False: END  # Complete
         }
     )
@@ -251,7 +242,6 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
     # Set up callbacks for tracing
     callbacks = []
     if trace:
-        # Add console tracing for debugging
         callbacks.append(ConsoleCallbackHandler())
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_PROJECT"] = "deepfunding"
@@ -272,8 +262,8 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
     # Initialize state with mock data
     initial_state = {
         "messages": [],
-        "repo_a": {"url": f"https://github.com/{repo_a_key}", **repo_a_data},  # Include mock data
-        "repo_b": {"url": f"https://github.com/{repo_b_key}", **repo_b_data},  # Include mock data
+        "repo_a": {"url": f"https://github.com/{repo_a_key}", **repo_a_data},
+        "repo_b": {"url": f"https://github.com/{repo_b_key}", **repo_b_data},
         "analysis": {},
         "phase": "collect"
     }
@@ -284,21 +274,34 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
     
     try:
         async for event in graph.astream(initial_state, config=config):
-            phase = event.get("phase", "")
+            print(f"Raw event: {event}")  # Debug print
+            
+            # Extract phase from the correct location in event
+            phase = ""
+            for key in event:
+                if isinstance(event[key], dict) and "phase" in event[key]:
+                    phase = event[key]["phase"]
+                    break
+            
             print(f"Current phase: {phase}")
-            print(f"Current event: {event}")
             
             if phase == "complete":
                 print("Comparison complete!")
-                analysis = event.get("analysis", {})
+                # Find the node output containing the analysis
+                analysis = None
+                for value in event.values():
+                    if isinstance(value, dict) and "analysis" in value:
+                        analysis = value.get("analysis", {})
+                        break
+                
+                if not analysis:
+                    logger.warning("No analysis found in event")
+                    analysis = {"error": "No analysis results"}
+                
                 print(f"Analysis results: {analysis}")
                 
                 weights = analysis.get("weights", {})
-                explanation = analysis.get("validation", {}).get("explanation", "No explanation available")
-                
-                if not weights:
-                    logger.warning("No weights found in analysis results")
-                    weights = {"error": "No weights calculated"}
+                explanation = analysis.get("validation")
                 
                 results = {
                     "relative_weights": weights,
@@ -309,7 +312,6 @@ async def run_comparison(repo_a_key: str, repo_b_key: str, trace: bool = False, 
                 # Add trace URL if tracing enabled
                 if trace:
                     try:
-                        # Get latest run from project
                         runs = client.list_runs(
                             project_name="deepfunding",
                             execution_order=1, 
@@ -352,8 +354,8 @@ async def main():
         weights = results.get("relative_weights", {})
         if weights:
             print(f"\nRelative Weights:")
-            for metric, weight in weights.items():
-                print(f"{metric}: {weight}")
+            for repo_url, weight in weights.items():
+                print(f"{repo_url}: {weight}")
         else:
             print("\nNo weights available")
             
