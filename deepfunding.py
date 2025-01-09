@@ -296,34 +296,21 @@ def create_comparison_graph():
     return workflow.compile()
 
 
-async def run_comparison(
-    repo_a_key: str, repo_b_key: str, trace: bool = False, visualize: bool = False
-):
+def run_comparison(repo_a_key: str, repo_b_key: str):
     """Run repository comparison with optional tracing"""
 
     # Mock data for repositories
     repo_a_data = MOCK_REPO_DATA[repo_a_key]  # Use mock data for repo A
     repo_b_data = MOCK_REPO_DATA[repo_b_key]  # Use mock data for repo B
 
-    # Set up callbacks for tracing
-    callbacks = []
-    if trace:
-        callbacks.append(ConsoleCallbackHandler())
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_PROJECT"] = "deepfunding"
-        os.environ["LANGCHAIN_API_KEY"] = langchain_api_key
-
     # Create graph
     graph = create_comparison_graph()
     print("Graph created successfully")
 
     # Save visualization if requested
-    if visualize:
-        from IPython.display import Image
-
-        graph_image = Image(graph.get_graph().draw_mermaid_png())
-        with open("comparison_workflow.png", "wb") as f:
-            f.write(graph_image.data)
+    graph_image = Image(graph.get_graph().draw_mermaid_png())
+    with open("comparison_workflow.png", "wb") as f:
+        f.write(graph_image.data)
         print("Graph visualization saved!")
 
     # Initialize state with mock data
@@ -336,11 +323,8 @@ async def run_comparison(
     }
     print(f"Initial state: {initial_state}")
 
-    # Stream execution with callbacks
-    config = {"configurable": {"callbacks": callbacks}}
-
     try:
-        for event in graph.stream(initial_state, config=config):
+        for event in graph.stream(initial_state):
             print(f"Raw event: {event}")  # Debug print
 
             # Extract phase from the correct location in event
@@ -377,18 +361,19 @@ async def run_comparison(
                 }
 
                 # Add trace URL if tracing enabled
-                if trace:
-                    try:
-                        runs = client.list_runs(
-                            project_name="deepfunding", execution_order=1, error=False
+                try:
+                    runs = client.list_runs(
+                        project_name=os.getenv("LANGCHAIN_PROJECT"),
+                        execution_order=1,
+                        error=False,
+                    )
+                    if runs:
+                        latest_run = runs[0]
+                        results["trace_url"] = (
+                            f"https://smith.langchain.com/public/{latest_run.id}/r"
                         )
-                        if runs:
-                            latest_run = runs[0]
-                            results["trace_url"] = (
-                                f"https://smith.langchain.com/public/{latest_run.id}/r"
-                            )
-                    except Exception as e:
-                        logger.error(f"Error getting trace URL: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Error getting trace URL: {str(e)}")
 
                 print(f"Final results: {results}")
                 return results
@@ -396,6 +381,7 @@ async def run_comparison(
     except Exception as e:
         logger.error(f"Error during comparison: {str(e)}")
         raise
+
 
 async def main():
     """Main entry point"""
