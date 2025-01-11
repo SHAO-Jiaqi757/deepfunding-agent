@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 from langgraph.types import Command
 
-from tools.data_collection import fetch_repo_metrics
+# from tools.data_collection import fetch_repo_metrics
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -52,9 +52,7 @@ def create_metrics_node():
 
     metrics_agent = create_react_agent(
         model,
-        [
-            fetch_repo_metrics,
-        ],
+        tools=[],
         state_modifier=SystemMessage(
             content="You are a repository analysis specialist. Collect and analyze repository metrics comprehensively."
         ),
@@ -70,9 +68,13 @@ def create_metrics_node():
         repo_a_data = {
             "messages": state["messages"]
             + [
-                SystemMessage(content=f"Analyze repository at {state['repo_a']['url']}")
+                SystemMessage(
+                    content=f"Analyze repository at {state['repo_a']['url']}"
+                ),
+                HumanMessage(content=f"Metrics: {state['repo_a']}"),
             ],
             "url": state["repo_a"]["url"],
+            "metrics": state["repo_a"],
             "command": "analyze_repository",
         }
         repo_a_result = metrics_agent.invoke(repo_a_data)
@@ -81,9 +83,13 @@ def create_metrics_node():
         repo_b_data = {
             "messages": state["messages"]
             + [
-                SystemMessage(content=f"Analyze repository at {state['repo_b']['url']}")
+                SystemMessage(
+                    content=f"Analyze repository at {state['repo_b']['url']}"
+                ),
+                HumanMessage(content=f"Metrics: {state['repo_b']}"),
             ],
             "url": state["repo_b"]["url"],
+            "metrics": state["repo_b"],
             "command": "analyze_repository",
         }
         repo_b_result = metrics_agent.invoke(repo_b_data)
@@ -427,12 +433,48 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
 def main():
     """Main entry point"""
     # Example usage
-    repo_a_url = "https://github.com/libp2p/go-libp2p"  # Use the key for repo A
-    repo_b_url = "https://github.com/beorn7/perks"  # Use the key for repo B
+    repo_a = {
+        "level": 1,
+        "language": "Go",
+        "status": "indexed",
+        "isFork": False,
+        "createdAt": "2013-12-26",
+        "updatedAt": "2024-12-29",
+        "starCount": 47988,
+        "forkCount": 20343,
+        "numPackages": 1,
+        "numDependentsInOso": 238,
+        "listOfFunders": ["Gitcoin", "Optimism"],
+        "totalFundingUsd": 2657310.811802441,
+        "totalFundingUsdSince2023": 2496187.621307001,
+        "osoDependencyRank": 0.38474672737620946,
+        "numReposInSameLanguage": 325,
+        "osoDependencyRankForLanguage": 0.9629629629629629,
+        "url": "https://github.com/ethereum/go-ethereum",
+    }
+    repo_b = {
+        "level": 2,
+        "language": "Go",
+        "status": "indexed",
+        "isFork": False,
+        "createdAt": "2016-08-23",
+        "updatedAt": "2024-12-12",
+        "starCount": 157,
+        "forkCount": 47,
+        "numPackages": 1,
+        "numDependentsInOso": 165,
+        "listOfFunders": ["Optimism", "Gitcoin"],
+        "totalFundingUsd": 791769.407770362,
+        "totalFundingUsdSince2023": 791769.407770362,
+        "osoDependencyRank": 0.3164484917472965,
+        "numReposInSameLanguage": 325,
+        "osoDependencyRankForLanguage": 0.8641975308641975,
+        "url": "https://github.com/ipfs/go-cid",
+    }
 
     try:
         save_visualization()
-        results = run_comparison(repo_a_url, repo_b_url)
+        results = run_comparison(repo_a, repo_b)
 
         if not results:
             print("\nError: No results returned from comparison")
