@@ -1,12 +1,21 @@
 suffix = """
-Your analysis will be shared with other experts, provide your expert analysis supplementing the other experts' analysis.
-The FINAL OUTPUT should be the relative weights for the project A and B.
-For example, 
-project_url_a: 0.5
-project_url_b: 0.5
-Note that the sum of the weights should be 1.
-"""
+Your analysis will be shared with other experts, provide your expert analysis.
 
+Please provide a detailed explanation of your reasoning for the weights, considering:
+- Key metrics that influenced your decision
+- Relative strengths and weaknesses of each project
+- How the metrics indicate future potential and sustainability
+- Any risks or concerns that affected the weighting
+
+The FINAL OUTPUT must include:
+1. A comprehensive explanation of your weighting rationale
+2. The relative weights for repo_a and repo_b in the format:
+For example,
+repo_a_url: 0.5
+repo_b_url: 0.5
+
+Note that the weights must sum to 1.0 and should reflect the relative merit and potential of each project based on your expert analysis.
+"""
 
 
 PROJECT_ANALYZER_PROMPT = f"""
@@ -33,7 +42,3 @@ You are discussing with other experts of Project Evaluator and Funding Strategis
 Focus on user feedback and diversity in contributions. Ensure that funding decisions reflect community needs and promote transparency in the decision-making process.
 {suffix}
 """
-
-
-
-
