@@ -1,145 +1,34 @@
-from langchain_core.tools import tool
 from typing import Dict
-from tests.test_utils import (
-    get_stars,
-    get_forks,
-    get_watchers,
-    get_commit_count,
-    get_contributor_count,
-    count_open_issues,
-    calculate_pr_velocity,
-    calculate_issue_resolution_time,
-    calculate_test_coverage,
-    calculate_doc_coverage,
-    analyze_complexity,
-    count_active_contributors,
-    extract_direct_dependencies,
-    extract_indirect_dependencies,
-    build_dependency_graph,
-    analyze_contribution_frequency,
-    calculate_maintainer_response_time
-)
+
+import pandas as pd
+from langchain_core.tools import tool
+
+# Load the metrics DataFrame
+metrics_df = pd.read_csv("./datasets/oso/repo_and_funding_stats.csv", index_col=0)
+# Preprocess the data
+funding_averages = metrics_df.groupby("oso_project_id")[
+    ["gitcoin_grants_usd", "retro_funding_usd"]
+].transform("mean")
+metrics_df["gitcoin_grants_usd"] = funding_averages["gitcoin_grants_usd"]
+metrics_df["retro_funding_usd"] = funding_averages["retro_funding_usd"]
+
 
 @tool
 def fetch_repo_metrics(repo_url: str) -> Dict:
-    """Fetch key metrics from a GitHub repository including stars, forks, watchers, etc.
+    """
+    Fetch key metrics from a GitHub repository.
+
+    This function retrieves all available metrics for a specified GitHub repository
+    from a pre-loaded DataFrame. The metrics include various statistics and information
+    about the repository, such as stars, forks, and other relevant data fields.
 
     Args:
-        repo_url (str): The URL of the GitHub repository to fetch metrics from.
+        repo_url (str): The URL of the GitHub repository to fetch metrics for.
 
     Returns:
-        Dict: A dictionary containing key metrics of the repository:
-            - "stars": The number of stars the repository has received.
-            - "forks": The number of forks of the repository.
-            - "watchers": The number of watchers of the repository.
-            - "commits": The total number of commits in the repository.
-            - "contributors": The total number of contributors to the repository.
+        Dict: A dictionary containing all the fields present in the DataFrame for the
+        specified repository. If the repository is not found, an empty dictionary is returned.
     """
-    # Determine the repo key based on the URL
-    repo_key = "repo1" if "repo1" in repo_url else "repo2"  # Adjust based on your logic
-    return {
-        "stars": get_stars(repo_key),
-        "forks": get_forks(repo_key),
-        "watchers": get_watchers(repo_key),
-        "commits": get_commit_count(repo_key),
-        "contributors": get_contributor_count(repo_key)
-    }
-
-@tool
-def analyze_code_quality(repo_url: str) -> Dict:
-    """Analyze code quality metrics including test coverage, documentation, etc.
-
-    Args:
-        repo_url (str): The URL of the GitHub repository to analyze.
-
-    Returns:
-        Dict: A dictionary containing code quality metrics:
-            - "test_coverage": The percentage of code covered by tests.
-            - "doc_coverage": The percentage of documentation coverage.
-            - "code_complexity": A measure of the complexity of the codebase.
-    """
-    return {
-        "test_coverage": calculate_test_coverage(repo_url),
-        "doc_coverage": calculate_doc_coverage(repo_url),
-        "code_complexity": analyze_complexity(repo_url)
-    }
-
-@tool
-def get_dependencies(repo_url: str) -> Dict:
-    """Extract dependency information from the repository.
-
-    Args:
-        repo_url (str): The URL of the GitHub repository to extract dependencies from.
-
-    Returns:
-        Dict: A dictionary containing dependency information:
-            - "direct_deps": A list of direct dependencies.
-            - "indirect_deps": A list of indirect dependencies.
-            - "dep_graph": A graphical representation of the dependencies.
-    """
-    return {
-        "direct_deps": extract_direct_dependencies(repo_url),
-        "indirect_deps": extract_indirect_dependencies(repo_url),
-        "dep_graph": build_dependency_graph(repo_url)
-    }
-
-@tool
-def get_contributor_metrics(repo_url: str) -> Dict:
-    """Analyze contributor activity and engagement.
-
-    Args:
-        repo_url (str): The URL of the GitHub repository to analyze contributor metrics.
-
-    Returns:
-        Dict: A dictionary containing contributor metrics:
-            - "active_contributors": The number of active contributors.
-            - "contribution_frequency": The frequency of contributions made by contributors.
-            - "maintainer_responsiveness": The average response time of maintainers to contributions.
-    """
-    repo_key = "repo1" if "repo1" in repo_url else "repo2"
-    return {
-        "active_contributors": count_active_contributors(repo_key),
-        "contribution_frequency": analyze_contribution_frequency(repo_key),
-        "maintainer_responsiveness": calculate_maintainer_response_time(repo_key)
-    }
-
-@tool
-def analyze_issues_prs(repo_url: str) -> Dict:
-    """Analyze issues and pull requests patterns.
-
-    Args:
-        repo_url (str): The URL of the GitHub repository to analyze.
-
-    Returns:
-        Dict: A dictionary containing analysis of issues and pull requests:
-            - "open_issues": The number of open issues in the repository.
-            - "pr_velocity": The velocity of pull requests being merged.
-            - "issue_resolution_time": The average time taken to resolve issues.
-    """
-    repo_key = "repo1" if "repo1" in repo_url else "repo2"
-    return {
-        "open_issues": count_open_issues(repo_key),
-        "pr_velocity": calculate_pr_velocity(repo_key),
-        "issue_resolution_time": calculate_issue_resolution_time(repo_key)
-    }
-
-@tool
-def get_activity_metrics(repo_url: str) -> Dict:
-    """Get repository activity metrics over time.
-
-    Args:
-        repo_url (str): The URL of the GitHub repository to analyze activity metrics.
-
-    Returns:
-        Dict: A dictionary containing activity metrics:
-            - "open_issues": The number of open issues in the repository.
-            - "pr_velocity": The velocity of pull requests being merged.
-            - "issue_resolution_time": The average time taken to resolve issues.
-    """
-    # Determine the repo key based on the URL
-    repo_key = "repo1" if "repo1" in repo_url else "repo2"  # Adjust based on your logic
-    return {
-        "open_issues": count_open_issues(repo_key),
-        "pr_velocity": calculate_pr_velocity(repo_key),
-        "issue_resolution_time": calculate_issue_resolution_time(repo_key)
-    } 
+    if repo_url not in metrics_df.index:
+        raise ValueError(f"No metrics data found for repository: {repo_url}")
+    return metrics_df.loc[repo_url].to_dict()

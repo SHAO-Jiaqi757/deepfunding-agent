@@ -1,7 +1,7 @@
+import json
 import logging
 import os
-from typing import Annotated, Dict, List, Literal, TypedDict, Optional
-import json
+from typing import Annotated, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
 from IPython.display import Image
@@ -13,22 +13,18 @@ from langgraph.prebuilt import create_react_agent
 from langsmith import Client
 from pydantic import BaseModel, Field
 
-from tests.test_utils import MOCK_REPO_DATA  # Import the mock data
-from prompts.analyzer import PROJECT_ANALYZER_PROMPT, FUNDING_STRATEGIST_PROMPT, COMMUNITY_ADVOCATE_PROMPT
+from prompts.analyzer import (
+    COMMUNITY_ADVOCATE_PROMPT,
+    FUNDING_STRATEGIST_PROMPT,
+    PROJECT_ANALYZER_PROMPT,
+)
 from prompts.validator import VALIDATOR_PROMPT
+
 logger = logging.getLogger(__name__)
 
 from langgraph.types import Command
-from tenacity import retry, stop_after_attempt, wait_exponential
 
-from tools.data_collection import (
-    analyze_code_quality,
-    analyze_issues_prs,
-    fetch_repo_metrics,
-    get_activity_metrics,
-    get_contributor_metrics,
-    get_dependencies,
-)
+from tools.data_collection import fetch_repo_metrics
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -58,11 +54,6 @@ def create_metrics_node():
         model,
         [
             fetch_repo_metrics,
-            analyze_code_quality,
-            get_dependencies,
-            get_contributor_metrics,
-            analyze_issues_prs,
-            get_activity_metrics,
         ],
         state_modifier=SystemMessage(
             content="You are a repository analysis specialist. Collect and analyze repository metrics comprehensively."
@@ -85,8 +76,8 @@ def create_metrics_node():
             "command": "analyze_repository",
         }
         repo_a_result = metrics_agent.invoke(repo_a_data)
-        
-        # Second repository 
+
+        # Second repository
         repo_b_data = {
             "messages": state["messages"]
             + [
@@ -240,9 +231,9 @@ def create_community_advocate_node():
 def create_validator_node():
     """Creates node for validating analysis results"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
+
     def validator_node(state: ComparisonState) -> Command[Literal["supervisor", "__end__"]]:
-        
+
         class ValidationResult(BaseModel):
             is_valid: bool = Field(description="Whether the analysis is valid and complete")
             revision_needed: Optional[Literal["project_analyzer", "funding_strategist", "community_advocate"]] = Field(
@@ -262,41 +253,43 @@ def create_validator_node():
             for msg in state["messages"] 
             if msg.name in ["project_analyzer", "funding_strategist", "community_advocate"]
         }
-        
+
         validation_prompt = [
             SystemMessage(content=VALIDATOR_PROMPT),
             HumanMessage(content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}")
         ]
-        
+
         result = model.with_structured_output(ValidationResult).invoke(validation_prompt)
-        
+
         if result.is_valid:
             # If valid, update state and END
             return Command(
                 update={
                     "messages": [
                         HumanMessage(
-                            content=json.dumps({
-                                "validation": result.explanation,
-                                "weights": {
-                                    state["repo_a"]["url"]: result.weight_a,
-                                    state["repo_b"]["url"]: result.weight_b
+                            content=json.dumps(
+                                {
+                                    "validation": result.explanation,
+                                    "weights": {
+                                        state["repo_a"]["url"]: result.weight_a,
+                                        state["repo_b"]["url"]: result.weight_b,
+                                    },
                                 }
-                            }),
-                            name="validator"
+                            ),
+                            name="validator",
                         )
                     ],
                     "analysis": {
                         "weights": {
                             state["repo_a"]["url"]: result.weight_a,
-                            state["repo_b"]["url"]: result.weight_b
+                            state["repo_b"]["url"]: result.weight_b,
                         },
                         "validation": result.explanation,
-                        "final": True
+                        "final": True,
                     },
-                    "phase": "complete"
+                    "phase": "complete",
                 },
-                goto=END  # Validator decides to end the process
+                goto=END,  # Validator decides to end the process
             )
         else:
             # If invalid, update state and return to supervisor for revision
@@ -315,7 +308,7 @@ def create_validator_node():
                 },
                 goto="supervisor"  # Return to supervisor to route to appropriate analyzer
             )
-    
+
     return validator_node
 
 
@@ -342,28 +335,30 @@ def create_comparison_graph():
     return workflow.compile()
 
 
-def run_comparison(repo_a_key: str, repo_b_key: str):
-    """Run repository comparison with optional tracing"""
-
-    # Mock data for repositories
-    repo_a_data = MOCK_REPO_DATA[repo_a_key]  # Use mock data for repo A
-    repo_b_data = MOCK_REPO_DATA[repo_b_key]  # Use mock data for repo B
-
-    # Create graph
+def save_visualization():
+    """Save the visualization of the Agent comparison workflow"""
     graph = create_comparison_graph()
-    print("Graph created successfully")
-
-    # Save visualization if requested
     graph_image = Image(graph.get_graph().draw_mermaid_png())
     with open("comparison_workflow.png", "wb") as f:
         f.write(graph_image.data)
-        print("Graph visualization saved!")
+    print("Graph visualization saved!")
 
+
+def run_comparison(repo_a: Dict, repo_b: Dict):
+    """Run repository comparison with optional tracing
+
+    Args:
+        repo_a: Dict of first repository, containing url, metrics, and other relevant data
+        repo_b: Dict of second repository, containing url, metrics, and other relevant data
+
+    """
+
+    graph = create_comparison_graph()
     # Initialize state with mock data
     initial_state = {
         "messages": [],
-        "repo_a": {"url": f"https://github.com/{repo_a_key}", **repo_a_data},
-        "repo_b": {"url": f"https://github.com/{repo_b_key}", **repo_b_data},
+        "repo_a": repo_a,
+        "repo_b": repo_b,
         "analysis": {},
         "phase": "collect",
     }
@@ -407,19 +402,19 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
                 }
 
                 # Add trace URL if tracing enabled
-                try:
-                    runs = client.list_runs(
-                        project_name=os.getenv("LANGCHAIN_PROJECT"),
-                        execution_order=1,
-                        error=False,
-                    )
-                    if runs:
-                        latest_run = runs[0]
-                        results["trace_url"] = (
-                            f"https://smith.langchain.com/public/{latest_run.id}/r"
-                        )
-                except Exception as e:
-                    logger.error(f"Error getting trace URL: {str(e)}")
+                # try:
+                #     runs = client.list_runs(
+                #         project_name=os.getenv("LANGCHAIN_PROJECT"),
+                #         execution_order=1,
+                #         error=False,
+                #     )
+                #     if runs:
+                #         latest_run = runs[0]
+                #         results["trace_url"] = (
+                #             f"https://smith.langchain.com/public/{latest_run.id}/r"
+                #         )
+                # except Exception as e:
+                #     logger.error(f"Error getting trace URL: {str(e)}")
 
                 print(f"Final results: {results}")
                 return results
@@ -432,11 +427,12 @@ def run_comparison(repo_a_key: str, repo_b_key: str):
 def main():
     """Main entry point"""
     # Example usage
-    repo_a_key = "repo1"  # Use the key for repo A
-    repo_b_key = "repo2"  # Use the key for repo B
+    repo_a_url = "https://github.com/libp2p/go-libp2p"  # Use the key for repo A
+    repo_b_url = "https://github.com/beorn7/perks"  # Use the key for repo B
 
     try:
-        results = run_comparison(repo_a_key, repo_b_key)
+        save_visualization()
+        results = run_comparison(repo_a_url, repo_b_url)
 
         if not results:
             print("\nError: No results returned from comparison")
