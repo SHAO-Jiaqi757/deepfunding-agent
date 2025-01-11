@@ -11,5 +11,7 @@ VALIDATOR_PROMPT = """You are a validation specialist responsible for ensuring t
     - Identify which specific aspects need more detail or justification
     - Specify which analyzer should revisit their analysis
     
-    Only approve completion when all criteria are fully met with robust supporting evidence.
-    """
+    Approve completion when: 
+    1. all criteria are fully met with robust supporting evidence.
+    2. The analyzer has improved their analysis and provided a new analysis.
+"""
