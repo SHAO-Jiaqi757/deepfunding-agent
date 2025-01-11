@@ -347,7 +347,7 @@ def save_visualization():
     graph_image = Image(graph.get_graph().draw_mermaid_png())
     with open("comparison_workflow.png", "wb") as f:
         f.write(graph_image.data)
-    print("Graph visualization saved!")
+    logger.info("Graph visualization saved!")
 
 
 def run_comparison(repo_a: Dict, repo_b: Dict):
@@ -368,11 +368,11 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
         "analysis": {},
         "phase": "collect",
     }
-    print(f"Initial state: {initial_state}")
+    # print(f"Initial state: {initial_state}")
 
     try:
         for event in graph.stream(initial_state, config={"recursion_limit": 25}):
-            print(f"Raw event: {event}")  # Debug print
+            logger.info(f"Raw event: {event}")  # Debug print
 
             # Extract phase from the correct location in event
             phase = ""
@@ -381,10 +381,10 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
                     phase = event[key]["phase"]
                     break
 
-            print(f"Current phase: {phase}")
+            logger.info(f"Current phase: {phase}")
 
             if phase == "complete":
-                print("Comparison complete!")
+                logger.info("Comparison complete!")
                 # Find the node output containing the analysis
                 analysis = None
                 for value in event.values():
@@ -396,7 +396,7 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
                     logger.warning("No analysis found in event")
                     analysis = {"error": "No analysis results"}
 
-                print(f"Analysis results: {analysis}")
+                logger.info(f"Analysis results: {analysis}")
 
                 weights = analysis.get("weights", {})
                 explanation = analysis.get("validation")
@@ -422,7 +422,7 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
                 # except Exception as e:
                 #     logger.error(f"Error getting trace URL: {str(e)}")
 
-                print(f"Final results: {results}")
+                logger.info(f"Final results: {results}")
                 return results
 
     except Exception as e:
@@ -477,32 +477,32 @@ def main():
         results = run_comparison(repo_a, repo_b)
 
         if not results:
-            print("\nError: No results returned from comparison")
+            logger.info("\nError: No results returned from comparison")
             return
 
-        print("\nComparison Results:")
-        print("==================")
+        logger.info("\nComparison Results:")
+        logger.info("==================")
 
         weights = results.get("weights", {})
         if weights:
-            print(f"\nRelative Weights:")
+            logger.info(f"\nRelative Weights:")
             for repo_url, weight in weights.items():
-                print(f"{repo_url}: {weight}")
+                logger.info(f"{repo_url}: {weight}")
         else:
-            print("\nNo weights available")
+            logger.info("\nNo weights available")
 
         explanation = results.get("explanation")
         if explanation:
-            print(f"\nExplanation:\n{explanation}")
+            logger.info(f"\nExplanation:\n{explanation}")
         else:
-            print("\nNo explanation available")
+            logger.info("\nNo explanation available")
 
         trace_url = results.get("trace_url")
         if trace_url:
-            print(f"\nTrace URL: {trace_url}")
+            logger.info(f"\nTrace URL: {trace_url}")
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         raise
 
 
