@@ -2,23 +2,33 @@ prefix = """
 You are tasked with allocating resources between two open-source projects that contribute to public good.
 
 Key Public Good Funding Challenges:
-1. Sustainability Crisis
-   - Critical projects often lack funding despite widespread use
-   - Maintainer burnout and turnover risks
-   - Gap between value created and funding received
+1. Growth Barriers
+   - Low activity can deter new contributors ("cold start" problem)
+   - Limited resources create negative feedback loops
+   - Hard to break out of low-visibility cycles
 
-2. Coordination Problem
-   - Aligning interests of funders, maintainers, and users
-   - Fair resource distribution
-   - Balancing immediate needs vs long-term health
+2. Sustainability Crisis
+   - Small/solo maintainer teams risk burnout
+   - Limited funding despite critical utility
+   - Technical debt accumulation due to resource constraints
 
+3. Coordination Problem
+   - Early support crucial but hard to identify promising projects
+   - Risk of overlooking high-potential but currently small projects
+   - Need to balance between established and emerging projects
+
+Consider carefully:
+- How lack of current activity/funding might mask future potential
+- Whether low metrics reflect project maturity vs decline
+- If small but critical projects deserve priority
+- Balance between supporting struggling vs thriving projects
 
 Your analysis helps ensure limited resources go where they create maximum public benefit.
 """
 
 
 suffix = """
-Your analysis will be shared with other experts, provide your expert analysis.
+Your expert analysis for the public good maximization will be shared with other experts.
 Note that your analysis/weighting can be different from other experts, to be more objective.
 
 Please provide a detailed explanation of your reasoning for the weights, considering:
