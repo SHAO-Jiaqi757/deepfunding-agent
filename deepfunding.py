@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from typing import Annotated, Dict, List, Literal, Optional, TypedDict
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from IPython.display import Image
@@ -12,7 +13,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from langsmith import Client
 from pydantic import BaseModel, Field
-
+from tools.consensus import GraphConsensusAnalyzer
 from prompts.analyzer import (
     COMMUNITY_ADVOCATE_PROMPT,
     FUNDING_STRATEGIST_PROMPT,
@@ -35,15 +36,25 @@ BASE_URL = os.getenv("BASE_URL")
 client = Client(api_key=langchain_api_key)
 
 
+class AgentAnalysis(BaseModel):
+    """Structured analysis from each agent"""
+    weight_a: float = Field(description="Weight for repo A")
+    weight_b: float = Field(description="Weight for repo B")
+    confidence: float = Field(description="Confidence in the analysis, 0-1")
+    reasoning: str = Field(description="Reasoning behind the analysis, e.g. why the weight was assigned")
+    metrics_used: List[str] = Field(description="Metrics used in the analysis, e.g. starCount, forkCount, etc.")
+
+
 # Define state schema for repository comparison
 class ComparisonState(TypedDict):
-    """State for comparing two repositories"""
-
-    messages: Annotated[List[BaseMessage], add_messages]  # Chat history with reducer
-    repo_a: Dict  # First repository data
-    repo_b: Dict  # Second repository data
-    analysis: Dict  # Analysis results
-    phase: Literal["collect", "analyze", "validate", "complete"]
+    """Enhanced state for comparing repositories"""
+    messages: Annotated[List[BaseMessage], add_messages]
+    repo_a: Dict
+    repo_b: Dict
+    analysis: Dict
+    phase: Literal["collect", "analyze", "consensus", "validate", "complete"]
+    agent_analyses: Dict[str, AgentAnalysis]  # Track structured analyses
+    consensus_data: Optional[Dict]  # Store consensus metrics
 
 
 def create_metrics_node():
@@ -111,7 +122,8 @@ def create_metrics_node():
                         name="metrics_collector",
                     ),
                 },
-            "phase": "analyze"
+            "phase": "analyze",
+            "agent_analyses": {},
         }
 
     return metrics_node
@@ -161,21 +173,24 @@ def create_supervisor_node():
 def create_project_analyzer_node():
     """Creates node for project analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
-    analyzer = create_react_agent(
-        model,
-        tools=[],
-        state_modifier=SystemMessage(content=PROJECT_ANALYZER_PROMPT)
-    )
-    
+  
     def project_analyzer_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
-        result = analyzer.invoke(state)
+        prompt = [
+            SystemMessage(content=PROJECT_ANALYZER_PROMPT),
+            HumanMessage(content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']['metrics']}\nRepo B: {state['repo_b']['metrics']}")
+        ]
+        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
+        print(f"Project Analyzer Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Project Analyzer: {result["messages"][-1].content}', name="project_analyzer")
+                    HumanMessage(content=f'Project Analyzer: {json.dumps(result.dict(), indent=2)}', name="project_analyzer")
                 ], 
-                "phase": "analyze"
+                "phase": "analyze",
+                "agent_analyses": {
+                    **state["agent_analyses"],
+                    "project_analyzer": result
+                }
             },
             goto="supervisor"
         )
@@ -187,20 +202,23 @@ def create_funding_strategist_node():
     """Creates node for funding strategy analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
     
-    strategist = create_react_agent(
-        model,
-        tools=[],
-        state_modifier=SystemMessage(content=FUNDING_STRATEGIST_PROMPT)
-    )
-    
     def funding_strategist_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
-        result = strategist.invoke(state)
+        prompt = [
+            SystemMessage(content=FUNDING_STRATEGIST_PROMPT),
+            HumanMessage(content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']['metrics']}\nRepo B: {state['repo_b']['metrics']}")
+        ]
+        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
+        print(f"Funding Strategist Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Funding Strategist: {result["messages"][-1].content}', name="funding_strategist")
+                    HumanMessage(content=f'Funding Strategist: {json.dumps(result.dict(), indent=2)}', name="funding_strategist")
                 ], 
-                "phase": "analyze"
+                "phase": "analyze",
+                "agent_analyses": {
+                    **state["agent_analyses"],
+                    "funding_strategist": result
+                }
             },
             goto="supervisor"
         )
@@ -211,22 +229,25 @@ def create_funding_strategist_node():
 def create_community_advocate_node():
     """Creates node for community analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
-    advocate = create_react_agent(
-        model,
-        tools=[],
-        state_modifier=SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT)
-    )
+ 
     
     def community_advocate_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
-        
-        result = advocate.invoke(state)
+        prompt = [
+            SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT),
+            HumanMessage(content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']['metrics']}\nRepo B: {state['repo_b']['metrics']}")
+        ] 
+        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
+        print(f"Community Advocate Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Community Advocate: {result["messages"][-1].content}', name="community_advocate")
+                    HumanMessage(content=f'Community Advocate: {json.dumps(result.dict(), indent=2)}', name="community_advocate")
                 ], 
-                "phase": "analyze"
+                "phase": "analyze",
+                "agent_analyses": {
+                    **state["agent_analyses"],
+                    "community_advocate": result
+                }
             },
             goto="supervisor"
         )
@@ -268,7 +289,6 @@ def create_validator_node():
         result = model.with_structured_output(ValidationResult).invoke(validation_prompt)
 
         if result.is_valid:
-            # If valid, update state and END
             return Command(
                 update={
                     "messages": [
@@ -293,12 +313,11 @@ def create_validator_node():
                         "validation": result.explanation,
                         "final": True,
                     },
-                    "phase": "complete",
+                    "phase": "validate",
                 },
-                goto=END,  # Validator decides to end the process
+                goto="consensus",
             )
         else:
-            # If invalid, update state and return to supervisor for revision
             return Command(
                 update={
                     "messages": [
@@ -318,26 +337,60 @@ def create_validator_node():
     return validator_node
 
 
-def create_comparison_graph():
-    """Creates the repository comparison workflow graph"""
-    workflow = StateGraph(ComparisonState)
+def create_consensus_node():
+    """Creates consensus node for the workflow"""
+    consensus_analyzer = GraphConsensusAnalyzer()
+    
+    def consensus_node(state: ComparisonState) -> Command[Literal["__end__"]]:
+        # Extract analyses from state
+        for agent, analysis in state["agent_analyses"].items():
+            consensus_analyzer.add_agent_analysis(
+                agent,
+                analysis,
+            )
+        
+        # Compute consensus
+        consensus_result = consensus_analyzer.compute_consensus()
+        
+        return {
+                "messages": state["messages"] + [
+                    HumanMessage(
+                        content=json.dumps(consensus_result.dict(), indent=2),
+                        name="consensus"
+                    )
+                ],
+                "analysis": {
+                    "weights": {
+                        state["repo_a"]["url"]: consensus_result.weight_a,
+                        state["repo_b"]["url"]: consensus_result.weight_b,
+                    },
+                    "final": True,
+                },
+                "phase": "complete"
+            }
+    
+    return consensus_node
 
+
+def create_comparison_graph():
+    """Creates enhanced comparison workflow graph"""
+    workflow = StateGraph(ComparisonState)
+    
     # Add nodes
     workflow.add_node("metrics_collector", create_metrics_node())
     workflow.add_node("supervisor", create_supervisor_node())
     workflow.add_node("project_analyzer", create_project_analyzer_node())
-    workflow.add_node("funding_strategist", create_funding_strategist_node()) 
+    workflow.add_node("funding_strategist", create_funding_strategist_node())
     workflow.add_node("community_advocate", create_community_advocate_node())
+    workflow.add_node("consensus", create_consensus_node())  # New node
     workflow.add_node("validator", create_validator_node())
-
-    # Add edges
+    
+    # Update edges to include consensus
     workflow.add_edge(START, "metrics_collector")
     workflow.add_edge("metrics_collector", "supervisor")
-    # workflow.add_edge("project_analyzer", "supervisor")
-    # workflow.add_edge("funding_strategist", "supervisor")
-    # workflow.add_edge("community_advocate", "supervisor")
-    # workflow.add_edge("validator", "supervisor")
 
+    workflow.add_edge("validator", "consensus")  # New edge
+    workflow.add_edge("consensus", "__end__")
     return workflow.compile()
 
 
@@ -347,6 +400,7 @@ def save_visualization():
     graph_image = Image(graph.get_graph().draw_mermaid_png())
     with open("comparison_workflow.png", "wb") as f:
         f.write(graph_image.data)
+    print("Graph visualization saved!")
     logger.info("Graph visualization saved!")
 
 
@@ -399,11 +453,11 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
                 logger.info(f"Analysis results: {analysis}")
 
                 weights = analysis.get("weights", {})
-                explanation = analysis.get("validation")
+                # explanation = analysis.get("validation")
 
                 results = {
                     "weights": weights,
-                    "explanation": explanation,
+                    # "explanation": explanation,
                     "trace_url": None,
                 }
 
@@ -491,11 +545,11 @@ def main():
         else:
             logger.info("\nNo weights available")
 
-        explanation = results.get("explanation")
-        if explanation:
-            logger.info(f"\nExplanation:\n{explanation}")
-        else:
-            logger.info("\nNo explanation available")
+        # explanation = results.get("explanation")
+        # if explanation:
+        #     logger.info(f"\nExplanation:\n{explanation}")
+        # else:
+        #     logger.info("\nNo explanation available")
 
         trace_url = results.get("trace_url")
         if trace_url:
