@@ -7,32 +7,23 @@ from tests.test_utils import (
     compare_activity,
     compare_impact,
     compare_health,
-    normalize_weights,
-    calculate_confidence_score
+    normalize_weights
 )
+import json
+from pydantic import BaseModel, Field
 
 @tool
-def assess_project_impact(input_data: Dict) -> Dict:
+def assess_project_impact(metrics: Dict) -> Dict:
     """Assess the overall impact and importance of the project.
 
     Args:
-        input_data (Dict): A dictionary containing:
-            - repo_data (Dict): Repository metrics and data
+        metrics (Dict): repository metrics and data to analyze
 
     Returns:
         Dict: A dictionary containing the assessed impact metrics
     """
-    # Extract metrics data from the input structure
-    metrics = input_data.get("repo_data", {})
-    
-    if not metrics:
-        return {
-            "error": "Missing repository metrics",
-            "ecosystem_impact": 0,
-            "community_health": 0,
-            "technical_value": 0
-        }
-
+    print("debug >>> : metrics", metrics)
+    metrics = json.loads(metrics)
     try:
         return {
             "ecosystem_impact": calculate_ecosystem_impact(metrics),
@@ -48,22 +39,22 @@ def assess_project_impact(input_data: Dict) -> Dict:
         }
 
 @tool
-def compare_project_metrics(input_data: Dict) -> Dict:
+def compare_project_metrics(impact_scores: Dict) -> Dict:
     """Compare metrics between two repositories.
 
     Args:
-        input_data (Dict): A dictionary containing:
-            - repo_a (Dict): Data about the first repository
-            - repo_b (Dict): Data about the second repository
+        impact_scores (dict): contains impact scores for the repositories
+         - impact_score_a (float): impact score for the first repository
+         - impact_score_b (float): impact score for the second repository   
 
     Returns:
         Dict: A dictionary containing the comparison metrics
     """
-    repo_a_metrics = input_data.get("repo_a", {})
-    repo_b_metrics = input_data.get("repo_b", {})
-    
+    impact_scores = json.loads(impact_scores)
+    repo_a = impact_scores.get("impact_score_a", 0)
+    repo_b = impact_scores.get("impact_score_b", 0)
 
-    if not repo_a_metrics or not repo_b_metrics:
+    if not repo_a or not repo_b:
         return {
             "error": "Missing metrics data",
             "relative_activity": 0,
@@ -73,9 +64,9 @@ def compare_project_metrics(input_data: Dict) -> Dict:
 
     try:
         return {
-            "relative_activity": compare_activity(repo_a_metrics, repo_b_metrics),
-            "relative_impact": compare_impact(repo_a_metrics, repo_b_metrics),
-            "relative_health": compare_health(repo_a_metrics, repo_b_metrics)
+            "relative_activity": compare_activity(repo_a, repo_b),
+            "relative_impact": compare_impact(repo_a, repo_b),
+            "relative_health": compare_health(repo_a, repo_b)
         }
     except Exception as e:
         return {
@@ -84,41 +75,45 @@ def compare_project_metrics(input_data: Dict) -> Dict:
             "relative_impact": 0,
             "relative_health": 0
         }
-
+        
 @tool
-def calculate_relative_weights(input_data: Dict) -> Dict:
+def calculate_relative_weights(impact_scores: Dict) -> Dict:
     """Calculate relative weights between repositories.
 
     Args:
-        input_data (Dict): A dictionary containing:
-            - impact_scores (Dict): Impact scores for the repositories
+        impact_scores (dict): contains impact scores for the repositories
+         - impact_score_a (float): impact score for the first repository
+         - impact_score_b (float): impact score for the second repository
 
     Returns:
         Dict: A dictionary containing:
-            - "weights": The normalized weights calculated from the impact scores.
-            - "confidence": The confidence score calculated from the impact scores.
+            - "weights": List of normalized weights (float) for each repository
     """
-    impact_scores = input_data.get("impact_scores", {})
+    print("debug >>> : impact_scores", impact_scores)
+    impact_score_a = impact_scores.get("impact_score_a", 0)
+    impact_score_b = impact_scores.get("impact_score_b", 0)
+    print("debug >>> : impact_score_a", impact_score_a)
+    print("debug >>> : impact_score_b", impact_score_b)
+
     
     return {
-        "weights": normalize_weights(impact_scores),
-        "confidence": calculate_confidence_score(impact_scores)
+        "weights": normalize_weights([impact_score_a, impact_score_b]),
     }
 
+
 @tool
-def normalize_comparison_scores(input_data: Dict) -> Dict:
+def normalize_comparison_scores(scores: str) -> Dict:
     """Normalize comparison scores to ensure fair comparison.
 
     Args:
-        input_data (Dict): A dictionary containing:
-            - scores (Dict): Raw scores to be normalized
+        scores (Dict): Raw scores to be normalized
 
     Returns:
         Dict: A dictionary containing:
             - "normalized_scores": A dictionary of normalized scores.
             - "scaling_factor": The scaling factor used for normalization.
     """
-    scores = input_data.get("scores", {})
+    scores = kwargs.get("scores", {})
     normalized = {}
     total = sum(scores.values())
     
