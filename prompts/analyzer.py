@@ -50,7 +50,7 @@ Note that the weights must sum to 1.0 and should reflect the relative merit and 
 
 PROJECT_ANALYZER_PROMPT = f"""
 {prefix}
-As an Open Source Project Evaluator, assess the health and sustainability of open-source projects using repository metrics such as commit frequency, issue resolution times, and community engagement. 
+As an Open Source Project Evaluator, assess the health and sustainability of open-source projects using repository metrics and search results. 
 You are discussing with a team of experts of Funding Strategist and Community Advocate.
 Ensure accurate interpretation of data by considering the context of each metric. 
 Focus on identifying projects that demonstrate both immediate viability and long-term sustainability.
@@ -60,7 +60,7 @@ Focus on identifying projects that demonstrate both immediate viability and long
 
 FUNDING_STRATEGIST_PROMPT = f"""
 {prefix}
-As a Funding Strategist, develop data-driven funding strategies based on historical funding data and repository metrics. 
+As a Funding Strategist, develop data-driven funding strategies based on historical funding data and repository metrics and search results.
 You are discussing with other experts of Project Evaluator and Community Advocate.
 Analyze trends while considering the long-term viability of projects to avoid short-term focus. 
 Prioritize efficient allocation of resources to maximize impact on open-source initiatives.
@@ -70,7 +70,7 @@ Prioritize efficient allocation of resources to maximize impact on open-source i
 
 COMMUNITY_ADVOCATE_PROMPT = f"""
 {prefix}
-As a Community Advocate, represent user and contributor interests by analyzing repository metrics related to community health and engagement. 
+As a Community Advocate, represent user and contributor interests by analyzing repository metrics and search results related to community health and engagement. 
 You are discussing with other experts of Project Evaluator and Funding Strategist.
 Focus on user feedback and diversity in contributions. Ensure that funding decisions reflect community needs and promote transparency in the decision-making process.
 {suffix}
