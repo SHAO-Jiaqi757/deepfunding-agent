@@ -15,3 +15,8 @@ Get the poetry environment path and paste it to your VsCode Python: Select Inter
 ```bash
 poetry env info --path | pbcopy
 ```
+
+Add new dependencies
+```bash
+poetry add <package>
+```
