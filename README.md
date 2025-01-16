@@ -8,18 +8,18 @@ Build AI Agent to better funding public goods, specifically for [deepfunding.org
 poetry install
 cp .env.example .env
 ```
-Huggingface part1 [mini-contest.ipynb](./mini-contest.ipynb)
+Huggingface part1 [python notebook](./mini-contest.ipynb) and [partial result](./mini-contest/dataset-agent.csv)
 
 ## How It Works
 ![Workflow](./comparison_workflow.png)
 
 1. Metrics Collector
 - Gathers repository metrics from [OSO](https://docs.opensource.observer/)
-- Analyzes README content
+- Fetch README content
 - Online search for additional information
-- Generate a metrics report 
+- Send metrics to Analyzer Agents
 2. Multi Analyzer Agents
-- Each agent reads the metrics report and provides structured analysis including weights, reasoning, and confidence.
+- Each agent reads the metrics and provides structured analysis including weights, reasoning, and confidence.
 - Project Analyzer: Evaluates technical aspects and project fundamentals
 - Funding Strategist: Focuses on funding history and resource allocation
 - Community Advocate: Analyzes community engagement and ecosystem impact
