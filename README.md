@@ -29,7 +29,8 @@ Huggingface part1 [python notebook](./mini-contest.ipynb) and [partial result](.
 ## Development
 
 ### Add/Change Agents
-https://langchain-ai.github.io/langgraph/tutorials/introduction/
+[langchain tutorial](https://langchain-ai.github.io/langgraph/tutorials/introduction/)
+
 `workflow.add_node` in [deepfunding.py](./deepfunding.py)
 
 ### VsCode
