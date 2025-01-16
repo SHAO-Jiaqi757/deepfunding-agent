@@ -1,8 +1,8 @@
 import json
 import logging
 import os
-from typing import Annotated, Dict, List, Literal, Optional, TypedDict
 from dataclasses import dataclass
+from typing import Annotated, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
 from IPython.display import Image
@@ -13,15 +13,15 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from langsmith import Client
 from pydantic import BaseModel, Field
-from tools.consensus import GraphConsensusAnalyzer
+
 from prompts.analyzer import (
     COMMUNITY_ADVOCATE_PROMPT,
     FUNDING_STRATEGIST_PROMPT,
     PROJECT_ANALYZER_PROMPT,
 )
-from tools.search import generate_search_queries, search_tool, fetch_readme
 from prompts.validator import VALIDATOR_PROMPT
-from langchain_community.tools.tavily_search import TavilySearchResults
+from tools.consensus import GraphConsensusAnalyzer
+from tools.search import fetch_readme, generate_search_queries, search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,6 @@ BASE_URL = os.getenv("BASE_URL")
 
 # Add after load_dotenv()
 client = Client(api_key=langchain_api_key)
-
-
 
 
 class AgentAnalysis(BaseModel):
