@@ -1,12 +1,14 @@
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Annotated, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
 from IPython.display import Image
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.tracers.langchain import wait_for_all_tracers
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -24,6 +26,7 @@ from tools.consensus import GraphConsensusAnalyzer
 from tools.search import fetch_readme, generate_search_queries, search_tool
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 from langgraph.types import Command
 
@@ -407,17 +410,20 @@ def save_visualization():
     logger.info("Graph visualization saved!")
 
 
-def run_comparison(repo_a: Dict, repo_b: Dict):
-    """Run repository comparison with optional tracing
+def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
+    """LLM Agents compare two repositories
 
     Args:
         repo_a: Dict of first repository, containing url, metrics, and other relevant data
         repo_b: Dict of second repository, containing url, metrics, and other relevant data
 
+    Returns:
+        Dict: Dict of results, containing weights, validation, and trace url
     """
 
     graph = create_comparison_graph()
-    # Initialize state with mock data
+    results = {}
+    run_id = uuid.uuid4()
     initial_state = {
         "messages": [],
         "repo_a": repo_a,
@@ -425,70 +431,49 @@ def run_comparison(repo_a: Dict, repo_b: Dict):
         "analysis": {},
         "phase": "collect",
     }
-    # print(f"Initial state: {initial_state}")
+    for event in graph.stream(
+        initial_state, config={"recursion_limit": 25, "run_id": run_id}
+    ):
+        logger.info(f"Raw event: {event}")  # Debug print
 
-    try:
-        for event in graph.stream(initial_state, config={"recursion_limit": 25}):
-            logger.info(f"Raw event: {event}")  # Debug print
+        # Extract phase from the correct location in event
+        phase = ""
+        for key in event:
+            if isinstance(event[key], dict) and "phase" in event[key]:
+                phase = event[key]["phase"]
+                break
 
-            # Extract phase from the correct location in event
-            phase = ""
-            for key in event:
-                if isinstance(event[key], dict) and "phase" in event[key]:
-                    phase = event[key]["phase"]
+        logger.info(f"Current phase: {phase}")
+
+        if phase == "complete":
+            logger.info("Comparison complete!")
+            # Find the node output containing the analysis
+            analysis = None
+            for value in event.values():
+                if isinstance(value, dict) and "analysis" in value:
+                    analysis = value.get("analysis", {})
                     break
 
-            logger.info(f"Current phase: {phase}")
+            if not analysis:
+                logger.warning("No analysis found in event")
+                analysis = {"error": "No analysis results"}
 
-            if phase == "complete":
-                logger.info("Comparison complete!")
-                # Find the node output containing the analysis
-                analysis = None
-                for value in event.values():
-                    if isinstance(value, dict) and "analysis" in value:
-                        analysis = value.get("analysis", {})
-                        break
+            logger.info(f"Analysis results: {analysis}")
 
-                if not analysis:
-                    logger.warning("No analysis found in event")
-                    analysis = {"error": "No analysis results"}
+            weights = analysis.get("weights", {})
 
-                logger.info(f"Analysis results: {analysis}")
+            results["weights"] = weights
 
-                weights = analysis.get("weights", {})
-                # explanation = analysis.get("validation")
-
-                results = {
-                    "weights": weights,
-                    # "explanation": explanation,
-                    "trace_url": None,
-                }
-
-                # Add trace URL if tracing enabled
-                # try:
-                #     runs = client.list_runs(
-                #         project_name=os.getenv("LANGCHAIN_PROJECT"),
-                #         execution_order=1,
-                #         error=False,
-                #     )
-                #     if runs:
-                #         latest_run = runs[0]
-                #         results["trace_url"] = (
-                #             f"https://smith.langchain.com/public/{latest_run.id}/r"
-                #         )
-                # except Exception as e:
-                #     logger.error(f"Error getting trace URL: {str(e)}")
-
-                logger.info(f"Final results: {results}")
-                return results
-
-    except Exception as e:
-        logger.error(f"Error during comparison: {str(e)}")
-        raise
+    results["trace_url"] = client.share_run(run_id)
+    wait_for_all_tracers()
+    logger.info(f"Final results: {results}")
+    return results
 
 
 def main():
     """Main entry point"""
+    logging.basicConfig(force=True)
+
     # Example usage
     repo_a = {
         "level": 1,
@@ -529,39 +514,9 @@ def main():
         "url": "https://github.com/ipfs/go-cid",
     }
 
-    try:
-        save_visualization()
-        results = run_comparison(repo_a, repo_b)
-
-        if not results:
-            logger.info("\nError: No results returned from comparison")
-            return
-
-        logger.info("\nComparison Results:")
-        logger.info("==================")
-
-        weights = results.get("weights", {})
-        if weights:
-            logger.info(f"\nRelative Weights:")
-            for repo_url, weight in weights.items():
-                logger.info(f"{repo_url}: {weight}")
-        else:
-            logger.info("\nNo weights available")
-
-        # explanation = results.get("explanation")
-        # if explanation:
-        #     logger.info(f"\nExplanation:\n{explanation}")
-        # else:
-        #     logger.info("\nNo explanation available")
-
-        trace_url = results.get("trace_url")
-        if trace_url:
-            logger.info(f"\nTrace URL: {trace_url}")
-
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        raise
-
+    save_visualization()
+    results = run_comparison(repo_a, repo_b)
+    print(f"Results: {results}")
 
 if __name__ == "__main__":
     main()
