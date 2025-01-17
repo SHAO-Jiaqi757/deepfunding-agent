@@ -43,16 +43,22 @@ client = Client(api_key=langchain_api_key)
 
 class AgentAnalysis(BaseModel):
     """Structured analysis from each agent"""
+
     weight_a: float = Field(description="Weight for repo A")
     weight_b: float = Field(description="Weight for repo B")
     confidence: float = Field(description="Confidence in the analysis, 0-1")
-    reasoning: str = Field(description="Reasoning behind the analysis, e.g. why the weight was assigned")
-    metrics_used: List[str] = Field(description="Metrics used in the analysis, e.g. starCount, forkCount, searchResults, etc.")
+    reasoning: str = Field(
+        description="Reasoning behind the analysis, e.g. why the weight was assigned"
+    )
+    metrics_used: List[str] = Field(
+        description="Metrics used in the analysis, e.g. starCount, forkCount, searchResults, etc."
+    )
 
 
 # Define state schema for repository comparison
 class ComparisonState(TypedDict):
     """Enhanced state for comparing repositories"""
+
     messages: Annotated[List[BaseMessage], add_messages]
     repo_a: Dict
     repo_b: Dict
@@ -64,21 +70,21 @@ class ComparisonState(TypedDict):
 
 def create_metrics_node():
     """Creates node for collecting repository metrics with enhanced search capabilities"""
-    
+
     llm = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
+
     def metrics_node(state: ComparisonState):
         """Collect metrics and enhanced context for both repositories"""
         logger.info(
             f"Processing repos: {state['repo_a']['url']} and {state['repo_b']['url']}"
         )
-        
+
         # Helper function to process a single repository
         def process_repository(repo_data):
             # Fetch README content first (you'll need to implement this)
-            repo_url = repo_data['url']
+            repo_url = repo_data["url"]
             readme_content = fetch_readme(repo_url)
-            
+
             # Generate search queries based on README content
             search_prompt = f"""
             Based on this repository's README content, generate relevant search queries:
@@ -86,26 +92,26 @@ def create_metrics_node():
             Repository URL: {repo_url}
             README Content: {readme_content}
             """
-            
+
             repo_search = generate_search_queries(llm, search_prompt)
             repo_results = []
-            
+
             for query in repo_search.queries:
                 logger.info(f"Searching for: {query}")
                 search_results = search_tool.invoke(query)
                 for result in search_results:
                     repo_results.append(result["content"])
-                
+
             return {
                 **repo_data,
                 "readme": readme_content,
-                "searchResults": repo_results
+                "searchResults": repo_results,
             }
-        
+
         # Process both repositories
-        repo_a_processed = process_repository(state['repo_a'])
-        repo_b_processed = process_repository(state['repo_b'])
-        
+        repo_a_processed = process_repository(state["repo_a"])
+        repo_b_processed = process_repository(state["repo_b"])
+
         # Format analysis message
         analysis_message = f"""
         Repository Analysis Results:
@@ -121,15 +127,14 @@ def create_metrics_node():
 
         return Command(
             update={
-                "messages": state["messages"] + [
-                    HumanMessage(content=analysis_message)
-                ],
+                "messages": state["messages"]
+                + [HumanMessage(content=analysis_message)],
                 "repo_a": repo_a_processed,
                 "repo_b": repo_b_processed,
                 "phase": "analyze",
-                "agent_analyses": {}
+                "agent_analyses": {},
             },
-            goto="supervisor"
+            goto="supervisor",
         )
 
     return metrics_node
@@ -138,10 +143,15 @@ def create_metrics_node():
 def create_supervisor_node():
     """Creates the supervisor node to orchestrate between analyzers"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
+
     # Remove FINISH from options since validator controls completion
-    members = ["project_analyzer", "funding_strategist", "community_advocate", "validator"]
-    
+    members = [
+        "project_analyzer",
+        "funding_strategist",
+        "community_advocate",
+        "validator",
+    ]
+
     system_prompt = (
         "You are a supervisor tasked with managing analysis between the"
         f" following specialists: {members}. Given the repository metrics"
@@ -149,115 +159,140 @@ def create_supervisor_node():
         " Once all specialists have provided their analysis, route to the validator"
         " for verification."
     )
-    
+
     class Router(TypedDict):
         """Worker to route to next."""
+
         next: Literal[*members]
-    
+
     def supervisor_node(state: ComparisonState) -> Command[Literal[*members]]:
         messages = [
             {"role": "system", "content": system_prompt},
         ] + state["messages"]
-        
+
         # Check if all analyzers have contributed
-        analyzer_names = ["project_analyzer", "funding_strategist", "community_advocate"]
+        analyzer_names = [
+            "project_analyzer",
+            "funding_strategist",
+            "community_advocate",
+        ]
         all_analyzed = all(
-            any(msg.name == name for msg in state["messages"]) 
+            any(msg.name == name for msg in state["messages"])
             for name in analyzer_names
         )
-        
+
         # If all have analyzed but not validated, force route to validator
-        if all_analyzed and not any(msg.name == "validator" for msg in state["messages"]):
+        if all_analyzed and not any(
+            msg.name == "validator" for msg in state["messages"]
+        ):
             return Command(goto="validator")
-            
+
         response = model.with_structured_output(Router).invoke(messages)
         return Command(goto=response["next"])
-        
+
     return supervisor_node
 
 
 def create_project_analyzer_node():
     """Creates node for project analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-  
+
     def project_analyzer_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
         prompt = [
             SystemMessage(content=PROJECT_ANALYZER_PROMPT),
-            HumanMessage(content=f"Analyze the following two repositories with relevant metrics and search results: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}")
+            HumanMessage(
+                content=f"Analyze the following two repositories with relevant metrics and search results: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
+            ),
         ]
         result = model.with_structured_output(AgentAnalysis).invoke(prompt)
         print(f"Project Analyzer Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Project Analyzer: {json.dumps(result.dict(), indent=2)}', name="project_analyzer")
-                ], 
+                    HumanMessage(
+                        content=f"Project Analyzer: {json.dumps(result.dict(), indent=2)}",
+                        name="project_analyzer",
+                    )
+                ],
                 "phase": "analyze",
                 "agent_analyses": {
                     **state["agent_analyses"],
-                    "project_analyzer": result
-                }
+                    "project_analyzer": result,
+                },
             },
-            goto="supervisor"
+            goto="supervisor",
         )
-        
+
     return project_analyzer_node
 
 
 def create_funding_strategist_node():
     """Creates node for funding strategy analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
-    
-    def funding_strategist_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
+
+    def funding_strategist_node(
+        state: ComparisonState,
+    ) -> Command[Literal["supervisor"]]:
         prompt = [
             SystemMessage(content=FUNDING_STRATEGIST_PROMPT),
-            HumanMessage(content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}")
+            HumanMessage(
+                content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
+            ),
         ]
         result = model.with_structured_output(AgentAnalysis).invoke(prompt)
         print(f"Funding Strategist Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Funding Strategist: {json.dumps(result.model_dump(), indent=2)}', name="funding_strategist")
-                ], 
+                    HumanMessage(
+                        content=f"Funding Strategist: {json.dumps(result.model_dump(), indent=2)}",
+                        name="funding_strategist",
+                    )
+                ],
                 "phase": "analyze",
                 "agent_analyses": {
                     **state["agent_analyses"],
-                    "funding_strategist": result
-                }
+                    "funding_strategist": result,
+                },
             },
-            goto="supervisor"
+            goto="supervisor",
         )
-        
+
     return funding_strategist_node
 
 
 def create_community_advocate_node():
     """Creates node for community analysis"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
- 
-    
-    def community_advocate_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
+
+    def community_advocate_node(
+        state: ComparisonState,
+    ) -> Command[Literal["supervisor"]]:
         prompt = [
             SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT),
-            HumanMessage(content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}")
-        ] 
+            HumanMessage(
+                content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
+            ),
+        ]
         result = model.with_structured_output(AgentAnalysis).invoke(prompt)
         print(f"Community Advocate Result: {result}")
         return Command(
             update={
                 "messages": [
-                    HumanMessage(content=f'Community Advocate: {json.dumps(result.model_dump(), indent=2)}', name="community_advocate")
-                ], 
+                    HumanMessage(
+                        content=f"Community Advocate: {json.dumps(result.model_dump(), indent=2)}",
+                        name="community_advocate",
+                    )
+                ],
                 "phase": "analyze",
                 "agent_analyses": {
                     **state["agent_analyses"],
-                    "community_advocate": result
-                }
+                    "community_advocate": result,
+                },
             },
-            goto="supervisor"
+            goto="supervisor",
         )
-        
+
     return community_advocate_node
 
 
@@ -265,14 +300,22 @@ def create_validator_node():
     """Creates node for validating analysis results"""
     model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
 
-    def validator_node(state: ComparisonState) -> Command[Literal["supervisor", "consensus"]]:
+    def validator_node(
+        state: ComparisonState,
+    ) -> Command[Literal["supervisor", "consensus"]]:
 
         class ValidationResult(BaseModel):
-            is_valid: bool = Field(description="Whether the analysis is valid and complete")
-            revision_needed: Optional[Literal["project_analyzer", "funding_strategist", "community_advocate"]] = Field(
+            is_valid: bool = Field(
+                description="Whether the analysis is valid and complete"
+            )
+            revision_needed: Optional[
+                Literal["project_analyzer", "funding_strategist", "community_advocate"]
+            ] = Field(
                 description="Which analyzer needs to revise their analysis, if any"
             )
-            explanation: str = Field(description="Explanation of validation result or needed revisions")
+            explanation: str = Field(
+                description="Explanation of validation result or needed revisions"
+            )
             weight_a: Optional[float] = Field(
                 description=f"Final validated (averaged) weight for {state['repo_a']['url']}"
             )
@@ -282,17 +325,22 @@ def create_validator_node():
 
         # Collect all analyses
         analyses = {
-            msg.name: msg.content 
-            for msg in state["messages"] 
-            if msg.name in ["project_analyzer", "funding_strategist", "community_advocate"]
+            msg.name: msg.content
+            for msg in state["messages"]
+            if msg.name
+            in ["project_analyzer", "funding_strategist", "community_advocate"]
         }
 
         validation_prompt = [
             SystemMessage(content=VALIDATOR_PROMPT),
-            HumanMessage(content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}")
+            HumanMessage(
+                content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}"
+            ),
         ]
 
-        result = model.with_structured_output(ValidationResult).invoke(validation_prompt)
+        result = model.with_structured_output(ValidationResult).invoke(
+            validation_prompt
+        )
 
         if result.is_valid:
             return Command(
@@ -328,16 +376,18 @@ def create_validator_node():
                 update={
                     "messages": [
                         HumanMessage(
-                            content=json.dumps({
-                                "validation": result.explanation,
-                                "revision_needed": result.revision_needed
-                            }),
-                            name="validator"
+                            content=json.dumps(
+                                {
+                                    "validation": result.explanation,
+                                    "revision_needed": result.revision_needed,
+                                }
+                            ),
+                            name="validator",
                         )
                     ],
-                    "phase": "analyze"
+                    "phase": "analyze",
                 },
-                goto="supervisor"  # Return to supervisor to route to appropriate analyzer
+                goto="supervisor",  # Return to supervisor to route to appropriate analyzer
             )
 
     return validator_node
@@ -346,7 +396,7 @@ def create_validator_node():
 def create_consensus_node():
     """Creates consensus node for the workflow"""
     consensus_analyzer = GraphConsensusAnalyzer()
-    
+
     def consensus_node(state: ComparisonState) -> Command[Literal["__end__"]]:
         # Extract analyses from state
         for agent, analysis in state["agent_analyses"].items():
@@ -354,34 +404,35 @@ def create_consensus_node():
                 agent,
                 analysis,
             )
-        
+
         # Compute consensus
         consensus_result = consensus_analyzer.compute_consensus()
-        
+
         return {
-                "messages": state["messages"] + [
-                    HumanMessage(
-                        content=json.dumps(consensus_result.model_dump(), indent=2),
-                        name="consensus"
-                    )
-                ],
-                "analysis": {
-                    "weights": {
-                        state["repo_a"]["url"]: consensus_result.weight_a,
-                        state["repo_b"]["url"]: consensus_result.weight_b,
-                    },
-                    "final": True,
+            "messages": state["messages"]
+            + [
+                HumanMessage(
+                    content=json.dumps(consensus_result.model_dump(), indent=2),
+                    name="consensus",
+                )
+            ],
+            "analysis": {
+                "weights": {
+                    state["repo_a"]["url"]: consensus_result.weight_a,
+                    state["repo_b"]["url"]: consensus_result.weight_b,
                 },
-                "phase": "complete"
-            }
-    
+                "final": True,
+            },
+            "phase": "complete",
+        }
+
     return consensus_node
 
 
 def create_comparison_graph():
     """Creates enhanced comparison workflow graph"""
     workflow = StateGraph(ComparisonState)
-    
+
     # Add nodes
     workflow.add_node("metrics_collector", create_metrics_node())
     workflow.add_node("supervisor", create_supervisor_node())
@@ -390,7 +441,7 @@ def create_comparison_graph():
     workflow.add_node("community_advocate", create_community_advocate_node())
     workflow.add_node("consensus", create_consensus_node())  # New node
     workflow.add_node("validator", create_validator_node())
-    
+
     # Update edges to include consensus
     workflow.add_edge(START, "metrics_collector")
     workflow.add_edge("metrics_collector", "supervisor")
@@ -411,14 +462,35 @@ def save_visualization():
 
 
 def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
-    """LLM Agents compare two repositories
-
+    """LLM Agents compare two repositories.
+    
     Args:
-        repo_a: Dict of first repository, containing url, metrics, and other relevant data
-        repo_b: Dict of second repository, containing url, metrics, and other relevant data
+        repo_a (Dict): First repository containing url, metrics, and other relevant data
+        repo_b (Dict): Second repository containing url, metrics, and other relevant data
 
     Returns:
-        Dict: Dict of results, containing weights, validation, and trace url
+        Dict: Results containing repository weights and trace URL
+
+    Example:
+        >>> repo_a = {
+                "url": "https://github.com/ethereum/go-ethereum",
+                "starCount": 47988,
+                "forkCount": 20343
+            }
+        >>> repo_b = {
+                "url": "https://github.com/ipfs/go-cid", 
+                "starCount": 157,
+                "forkCount": 47
+            }
+        >>> result = run_comparison(repo_a, repo_b)
+        >>> result
+        {
+            'weights': {
+                'https://github.com/ethereum/go-ethereum': 0.8,
+                'https://github.com/ipfs/go-cid': 0.2
+            },
+            'trace_url': 'https://smith.langchain.com/public/ece07a96-f9ab-4490-bda4-41ad180bcfec/r'
+        }
     """
 
     graph = create_comparison_graph()
@@ -517,6 +589,7 @@ def main():
     save_visualization()
     results = run_comparison(repo_a, repo_b)
     print(f"Results: {results}")
+
 
 if __name__ == "__main__":
     main()
