@@ -90,6 +90,7 @@ class ComparisonState(TypedDict):
     validator_result: Optional[ValidatorResult]
     consensus_data: Optional[Dict]
     analyzers_to_run: List[str]
+    already_revised: set[str]
 
 
 def create_metrics_node():
@@ -231,11 +232,19 @@ def create_validator_node():
                 }
             )
         else:
-            # Update state with analyzers needing revision
+            # Update state with analyzers needing revision, ensuring only one revision per analyzer
+            already_revised = state.get("already_revised", set())
+            revision_needed = [
+                analyzer
+                for analyzer in result.revision_needed
+                if analyzer not in already_revised
+            ]
+            already_revised.update(revision_needed)
             return Command(
                 update={
-                    "analyzers_to_run": result.revision_needed,
+                    "analyzers_to_run": revision_needed,
                     "validator_result": result,
+                    "already_revised": already_revised,
                 }
             )
 
