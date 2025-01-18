@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import uuid
-from operator import add
 from typing import Annotated, Dict, List, Literal, Optional, Sequence, TypedDict
 
 from dotenv import load_dotenv
@@ -152,7 +151,7 @@ def create_project_analyzer_node():
 
     def project_analyzer_node(
         state: ComparisonState,
-    ) -> Dict:  # Return Dict instead of Command
+    ) -> Command[Literal["validator"]]:
         prompt = [
             SystemMessage(content=PROJECT_ANALYZER_PROMPT),
             HumanMessage(
@@ -162,15 +161,18 @@ def create_project_analyzer_node():
         result = model.with_structured_output(AgentAnalysis).invoke(prompt)
         print(f"Project Analyzer Result: {result}")
 
-        return {
-            "messages": [
-                HumanMessage(
-                    content=f"Project Analyzer: {json.dumps(result.dict(), indent=2)}",
-                    name="project_analyzer",
-                )
-            ],
-            "agent_analyses": {"project_analyzer": result},
-        }
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(
+                        content=f"Project Analyzer: {json.dumps(result.dict(), indent=2)}",
+                        name="project_analyzer",
+                    )
+                ],
+                "agent_analyses": {"project_analyzer": result},
+            },
+            goto="validator",
+        )
 
     return project_analyzer_node
 
@@ -181,7 +183,7 @@ def create_funding_strategist_node():
 
     def funding_strategist_node(
         state: ComparisonState,
-    ) -> Command:
+    ) -> Command[Literal["validator"]]:
         prompt = [
             SystemMessage(content=FUNDING_STRATEGIST_PROMPT),
             HumanMessage(
@@ -203,6 +205,7 @@ def create_funding_strategist_node():
                     "funding_strategist": result,
                 },
             },
+            goto="validator",
         )
 
     return funding_strategist_node
@@ -214,7 +217,7 @@ def create_community_advocate_node():
 
     def community_advocate_node(
         state: ComparisonState,
-    ) -> Command:
+    ) -> Command[Literal["validator"]]:
         prompt = [
             SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT),
             HumanMessage(
@@ -236,6 +239,7 @@ def create_community_advocate_node():
                     "community_advocate": result,
                 },
             },
+            goto="validator",
         )
 
     return community_advocate_node
@@ -292,7 +296,7 @@ def create_validator_node():
         )
 
         if result.is_valid:
-            return Command(update={"analyzers_to_run": ["consensus"]})
+            return Command(update={"analyzers_to_run": ["consensus"], })
         else:
             # Update state with analyzers needing revision
             return Command(update={"analyzers_to_run": result.revision_needed})
@@ -324,10 +328,7 @@ def create_consensus_node():
                         name="consensus",
                     )
                 ],
-                "weights": {
-                    state["repo_a"]["url"]: consensus_result.weight_a,
-                    state["repo_b"]["url"]: consensus_result.weight_b,
-                },
+                "consensus_data": consensus_result.model_dump(),
             }
         )
 
@@ -363,7 +364,8 @@ def create_comparison_graph():
     for analyzer in all_analyzers:
         workflow.add_edge("metrics_collector", analyzer)
     # Connect analyzers to validator
-    workflow.add_edge(all_analyzers, "validator")
+    # Each analyzers return Command goto=valiator
+
     # Conditional branching to analyzers
     workflow.add_conditional_edges(
         "validator",
@@ -433,7 +435,8 @@ def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
         initial_state, config={"recursion_limit": 25, "run_id": run_id}
     ):
         logger.info(f"Raw event: {event}")
-        results["weights"] = event.get("weights")
+        if event.get("consensus"):
+            results = event["consensus"]["consensus_data"]
 
     results["trace_url"] = client.share_run(run_id)
     wait_for_all_tracers()
