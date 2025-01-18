@@ -131,3 +131,11 @@ query MetricsForProject($projectId: String!) {
   }
 }
 """
+
+if __name__ == "__main__":
+    res = fetch_repo_metrics(
+        "https://github.com/prettier-solidity/prettier-plugin-solidity"
+    )
+    from pprint import pprint
+
+    pprint(res)
