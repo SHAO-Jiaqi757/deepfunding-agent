@@ -42,8 +42,8 @@ client = Client(api_key=langchain_api_key)
 MODEL = os.getenv("MODEL")
 
 
-class AgentAnalysis(BaseModel):
-    """Structured analysis from each agent"""
+class AnalyzerResult(BaseModel):
+    """Structured analysis from each analyzer agent"""
 
     weight_a: float = Field(description="Weight for repo A")
     weight_b: float = Field(description="Weight for repo B")
@@ -53,6 +53,24 @@ class AgentAnalysis(BaseModel):
     )
     metrics_used: List[str] = Field(
         description="Metrics used in the analysis, e.g. starCount, forkCount, searchResults, etc."
+    )
+
+
+class ValidatorResult(BaseModel):
+    """Validate each analyzer agent's result"""
+
+    is_valid: bool = Field(description="Whether the analysis is valid and complete")
+    revision_needed: Optional[
+        List[Literal["project_analyzer", "funding_strategist", "community_advocate"]]
+    ] = Field(description="Which analyzers need to revise their analysis, if any")
+    explanation: str = Field(
+        description="Explanation of validation result or needed revisions"
+    )
+    weight_a: Optional[float] = Field(
+        description=f"Final validated (averaged) weight for repo A"
+    )
+    weight_b: Optional[float] = Field(
+        description=f"Final validated (averaged) weight for repo B"
     )
 
 
@@ -68,8 +86,8 @@ class ComparisonState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     repo_a: Dict
     repo_b: Dict
-    analysis: Dict
-    agent_analyses: Annotated[Dict[str, AgentAnalysis], merge_dict]
+    analyzer_results: Annotated[Dict[str, AnalyzerResult], merge_dict]
+    validator_result: Optional[ValidatorResult]
     consensus_data: Optional[Dict]
     analyzers_to_run: List[str]
 
@@ -99,14 +117,14 @@ def create_metrics_node():
             README Content: {readme_content}
             """
 
-            repo_search = generate_search_queries(llm, search_prompt)
+            # repo_search = generate_search_queries(llm, search_prompt)
             repo_results = []
 
-            for query in repo_search.queries:
-                logger.info(f"Searching for: {query}")
-                search_results = search_tool.invoke(query)
-                for result in search_results:
-                    repo_results.append(result["content"])
+            # for query in repo_search.queries:
+            #     logger.info(f"Searching for: {query}")
+            #     search_results = search_tool.invoke(query)
+            #     for result in search_results:
+            #         repo_results.append(result["content"])
 
             return {
                 **repo_data,
@@ -137,7 +155,6 @@ def create_metrics_node():
                 + [HumanMessage(content=analysis_message)],
                 "repo_a": repo_a_processed,
                 "repo_b": repo_b_processed,
-                "agent_analyses": {},
                 "analyzers_to_run": all_analyzers,
             },
         )
@@ -145,104 +162,41 @@ def create_metrics_node():
     return metrics_node
 
 
-def create_project_analyzer_node():
-    """Creates node for project analysis"""
+def create_analyzer_node(prompt_content, node_name):
+    """Creates a generic node for analysis"""
     model = ChatOpenAI(model=MODEL, base_url=BASE_URL, api_key=api_key)
 
-    def project_analyzer_node(
-        state: ComparisonState,
-    ) -> Command[Literal["validator"]]:
+    def analyzer_node(state: ComparisonState) -> Command[Literal["validator"]]:
         prompt = [
-            SystemMessage(content=PROJECT_ANALYZER_PROMPT),
-            HumanMessage(
-                content=f"Analyze the following two repositories with relevant metrics and search results: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
-            ),
-        ]
-        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
-        print(f"Project Analyzer Result: {result}")
-
-        return Command(
-            update={
-                "messages": [
-                    HumanMessage(
-                        content=f"Project Analyzer: {json.dumps(result.dict(), indent=2)}",
-                        name="project_analyzer",
-                    )
-                ],
-                "agent_analyses": {"project_analyzer": result},
-            },
-            goto="validator",
-        )
-
-    return project_analyzer_node
-
-
-def create_funding_strategist_node():
-    """Creates node for funding strategy analysis"""
-    model = ChatOpenAI(model=MODEL, base_url=BASE_URL, api_key=api_key)
-
-    def funding_strategist_node(
-        state: ComparisonState,
-    ) -> Command[Literal["validator"]]:
-        prompt = [
-            SystemMessage(content=FUNDING_STRATEGIST_PROMPT),
+            SystemMessage(content=prompt_content),
             HumanMessage(
                 content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
             ),
         ]
-        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
-        print(f"Funding Strategist Result: {result}")
+        if state.get("validator_result"):
+            prompt.append(
+                HumanMessage(
+                    content=f"Validator feedback: {state['validator_result']}. Please revise your analysis accordingly."
+                )
+            )
+        result: AnalyzerResult = model.with_structured_output(AnalyzerResult).invoke(
+            prompt
+        )
+        print(f"{node_name} Result: {result}")
         return Command(
             update={
                 "messages": [
                     HumanMessage(
-                        content=f"Funding Strategist: {json.dumps(result.model_dump(), indent=2)}",
-                        name="funding_strategist",
+                        content=result.model_dump_json(),
+                        name=node_name,
                     )
                 ],
-                "agent_analyses": {
-                    **state["agent_analyses"],
-                    "funding_strategist": result,
-                },
+                "analyzer_results": {node_name: result},
             },
             goto="validator",
         )
 
-    return funding_strategist_node
-
-
-def create_community_advocate_node():
-    """Creates node for community analysis"""
-    model = ChatOpenAI(model=MODEL, base_url=BASE_URL, api_key=api_key)
-
-    def community_advocate_node(
-        state: ComparisonState,
-    ) -> Command[Literal["validator"]]:
-        prompt = [
-            SystemMessage(content=COMMUNITY_ADVOCATE_PROMPT),
-            HumanMessage(
-                content=f"Analyze the following repository metrics: \nRepo A: {state['repo_a']}\nRepo B: {state['repo_b']}"
-            ),
-        ]
-        result = model.with_structured_output(AgentAnalysis).invoke(prompt)
-        print(f"Community Advocate Result: {result}")
-        return Command(
-            update={
-                "messages": [
-                    HumanMessage(
-                        content=f"Community Advocate: {json.dumps(result.model_dump(), indent=2)}",
-                        name="community_advocate",
-                    )
-                ],
-                "agent_analyses": {
-                    **state["agent_analyses"],
-                    "community_advocate": result,
-                },
-            },
-            goto="validator",
-        )
-
-    return community_advocate_node
+    return analyzer_node
 
 
 def create_validator_node():
@@ -252,54 +206,30 @@ def create_validator_node():
     def validator_node(
         state: ComparisonState,
     ) -> Command:
-
-        class ValidationResult(BaseModel):
-            is_valid: bool = Field(
-                description="Whether the analysis is valid and complete"
-            )
-            revision_needed: Optional[
-                List[
-                    Literal[
-                        "project_analyzer", "funding_strategist", "community_advocate"
-                    ]
-                ]
-            ] = Field(
-                description="Which analyzers need to revise their analysis, if any"
-            )
-            explanation: str = Field(
-                description="Explanation of validation result or needed revisions"
-            )
-            weight_a: Optional[float] = Field(
-                description=f"Final validated (averaged) weight for {state['repo_a']['url']}"
-            )
-            weight_b: Optional[float] = Field(
-                description=f"Final validated (averaged) weight for {state['repo_b']['url']}"
-            )
-
-        # Collect all analyses
-        analyses = {
-            msg.name: msg.content
-            for msg in state["messages"]
-            if msg.name
-            in ["project_analyzer", "funding_strategist", "community_advocate"]
-        }
-
         validation_prompt = [
             SystemMessage(content=VALIDATOR_PROMPT),
             HumanMessage(
-                content=f"Validate the following analyses:\n{json.dumps(analyses, indent=2)}"
+                content=f"Validate the following analyses: {state['analyzer_results']}"
             ),
         ]
 
-        result = model.with_structured_output(ValidationResult).invoke(
-            validation_prompt
-        )
+        result = model.with_structured_output(ValidatorResult).invoke(validation_prompt)
 
         if result.is_valid:
-            return Command(update={"analyzers_to_run": ["consensus"], })
+            return Command(
+                update={
+                    "analyzers_to_run": ["consensus"],
+                    "validator_result": result,
+                }
+            )
         else:
             # Update state with analyzers needing revision
-            return Command(update={"analyzers_to_run": result.revision_needed})
+            return Command(
+                update={
+                    "analyzers_to_run": result.revision_needed,
+                    "validator_result": result,
+                }
+            )
 
     return validator_node
 
@@ -310,7 +240,7 @@ def create_consensus_node():
 
     def consensus_node(state: ComparisonState) -> Command:
         # Extract analyses from state
-        for agent, analysis in state["agent_analyses"].items():
+        for agent, analysis in state["analyzer_results"].items():
             consensus_analyzer.add_agent_analysis(
                 agent,
                 analysis,
@@ -341,6 +271,12 @@ all_analyzers = [
     "community_advocate",
 ]
 
+analyzer_to_prompt = {
+    "project_analyzer": PROJECT_ANALYZER_PROMPT,
+    "funding_strategist": FUNDING_STRATEGIST_PROMPT,
+    "community_advocate": COMMUNITY_ADVOCATE_PROMPT,
+}
+
 
 # Function to determine which analyzers to run
 def goto_analyzer_or_consensus(state: ComparisonState) -> Sequence[str]:
@@ -353,9 +289,10 @@ def create_comparison_graph():
 
     # Add nodes
     workflow.add_node("metrics_collector", create_metrics_node())
-    workflow.add_node("project_analyzer", create_project_analyzer_node())
-    workflow.add_node("funding_strategist", create_funding_strategist_node())
-    workflow.add_node("community_advocate", create_community_advocate_node())
+    for analyzer in all_analyzers:
+        workflow.add_node(
+            analyzer, create_analyzer_node(analyzer_to_prompt[analyzer], analyzer)
+        )
     workflow.add_node("validator", create_validator_node())
     workflow.add_node("consensus", create_consensus_node())
 
@@ -392,7 +329,7 @@ def save_visualization():
 
 def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
     """LLM Agents compare two repositories.
-    
+
     Args:
         repo_a (Dict): First repository containing url, metrics, and other relevant data
         repo_b (Dict): Second repository containing url, metrics, and other relevant data
@@ -407,7 +344,7 @@ def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
                 "forkCount": 20343
             }
         >>> repo_b = {
-                "url": "https://github.com/ipfs/go-cid", 
+                "url": "https://github.com/ipfs/go-cid",
                 "starCount": 157,
                 "forkCount": 47
             }
@@ -429,7 +366,6 @@ def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
         "messages": [],
         "repo_a": repo_a,
         "repo_b": repo_b,
-        "analysis": {},
     }
     for event in graph.stream(
         initial_state, config={"recursion_limit": 25, "run_id": run_id}
