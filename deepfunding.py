@@ -108,28 +108,35 @@ def create_metrics_node():
             # Fetch README content first (you'll need to implement this)
             repo_url = repo_data["url"]
             readme_content = fetch_readme(repo_url)
+            # Summarize README content using LLM
+            summary_prompt = [
+                SystemMessage(
+                    content="You are a technical documentation expert. Summarize what this project is and what problem it solves based on the README content."
+                ),
+                HumanMessage(content=readme_content),
+            ]
+            readme_summary = llm.invoke(summary_prompt).content
 
             # Generate search queries based on README content
             search_prompt = f"""
             Based on this repository's README content, generate relevant search queries:
             
             Repository URL: {repo_url}
-            README Content: {readme_content}
+            README Summary: {readme_summary}
             """
 
-            # repo_search = generate_search_queries(llm, search_prompt)
-            repo_results = []
+            repo_search = generate_search_queries(llm, search_prompt)
+            search_results = []
 
-            # for query in repo_search.queries:
-            #     logger.info(f"Searching for: {query}")
-            #     search_results = search_tool.invoke(query)
-            #     for result in search_results:
-            #         repo_results.append(result["content"])
+            for query in repo_search.queries:
+                logger.info(f"Searching for: {query}")
+                result: List[Dict] = search_tool.invoke(query)
+                search_results.extend(result)
 
             return {
                 **repo_data,
-                "readme": readme_content,
-                "searchResults": repo_results,
+                "readme": readme_summary,
+                "searchResults": search_results,
             }
 
         # Process both repositories
@@ -141,11 +148,11 @@ def create_metrics_node():
         Repository Analysis Results:
         
         Repository A ({repo_a_processed['url']}):
-        README: {repo_a_processed['readme']}
+        README Summary: {repo_a_processed['readme']}
         Search Results: {repo_a_processed['searchResults']}
         
         Repository B ({repo_b_processed['url']}):
-        README: {repo_b_processed['readme']}
+        README Summary: {repo_b_processed['readme']}
         Search Results: {repo_b_processed['searchResults']}
         """
 
