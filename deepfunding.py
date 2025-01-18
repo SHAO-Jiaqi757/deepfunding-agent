@@ -40,6 +40,9 @@ BASE_URL = os.getenv("BASE_URL")
 # Add after load_dotenv()
 client = Client(api_key=langchain_api_key)
 
+# Load model name from environment
+model = os.getenv("MODEL")
+
 
 class AgentAnalysis(BaseModel):
     """Structured analysis from each agent"""
@@ -71,7 +74,7 @@ class ComparisonState(TypedDict):
 def create_metrics_node():
     """Creates node for collecting repository metrics with enhanced search capabilities"""
 
-    llm = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    llm = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     def metrics_node(state: ComparisonState):
         """Collect metrics and enhanced context for both repositories"""
@@ -142,7 +145,7 @@ def create_metrics_node():
 
 def create_supervisor_node():
     """Creates the supervisor node to orchestrate between analyzers"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    model = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     # Remove FINISH from options since validator controls completion
     members = [
@@ -195,7 +198,7 @@ def create_supervisor_node():
 
 def create_project_analyzer_node():
     """Creates node for project analysis"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    model = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     def project_analyzer_node(state: ComparisonState) -> Command[Literal["supervisor"]]:
         prompt = [
@@ -228,7 +231,7 @@ def create_project_analyzer_node():
 
 def create_funding_strategist_node():
     """Creates node for funding strategy analysis"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    model = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     def funding_strategist_node(
         state: ComparisonState,
@@ -263,7 +266,7 @@ def create_funding_strategist_node():
 
 def create_community_advocate_node():
     """Creates node for community analysis"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    model = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     def community_advocate_node(
         state: ComparisonState,
@@ -298,7 +301,7 @@ def create_community_advocate_node():
 
 def create_validator_node():
     """Creates node for validating analysis results"""
-    model = ChatOpenAI(model="gpt-4o-mini", base_url=BASE_URL, api_key=api_key)
+    model = ChatOpenAI(model=model, base_url=BASE_URL, api_key=api_key)
 
     def validator_node(
         state: ComparisonState,
