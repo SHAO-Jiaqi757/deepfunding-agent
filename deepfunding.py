@@ -28,7 +28,7 @@ logger.setLevel(logging.INFO)
 
 from langgraph.types import Command
 
-# from tools.data_collection import fetch_repo_metrics
+from tools.data_collection import fetch_oso_metrics
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -137,6 +137,7 @@ def create_metrics_node():
                 **repo_data,
                 "readme": readme_summary,
                 "searchResults": search_results,
+                **fetch_oso_metrics(repo_data["url"]),
             }
 
         # Process both repositories

@@ -3,12 +3,11 @@ from typing import Dict
 
 import dotenv
 import requests
-from langchain_core.tools import tool
 
 dotenv.load_dotenv()
 
-@tool
-def fetch_repo_metrics(repo_url: str) -> Dict:
+
+def fetch_oso_metrics(repo_url: str) -> Dict:
     """Fetches various metrics for a GitHub repository using the OpenSource Observer API.
 
     Args:
@@ -134,7 +133,7 @@ query MetricsForProject($projectId: String!) {
 """
 
 if __name__ == "__main__":
-    res = fetch_repo_metrics("https://github.com/ethereum/go-ethereum")
+    res = fetch_oso_metrics("https://github.com/ethereum/go-ethereum")
     from pprint import pprint
 
     pprint(res)
