@@ -12,7 +12,7 @@ Analyzers are allowed to give diverse weight from different aspects according to
 If any analysis is incomplete or inadequately supported:
 - Identify which specific aspects need more detail or justification
 - Specify which analyzer should revisit their analysis
-- Note: Only request ONE revision from each analyzer. If their revised analysis still needs improvement, approve it anyway and incorporate the available information.
+- Note: Allow for minor discrepancies in comprehensiveness or justification without requiring a revision. Only request ONE revision from each analyzer. If their revised analysis still needs improvement, approve it anyway and incorporate the available information. Provide detailed feedback on specific areas for improvement to help analyzers enhance their analyses effectively.
 
 Approve when:
 1. All criteria are fully met with robust supporting evidence, OR
