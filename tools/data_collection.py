@@ -120,6 +120,7 @@ query MetricsForProject($projectId: String!) {
     newContributorCount6Months
     openedIssueCount6Months
     openedPullRequestCount6Months
+    repositoryCount
     starCount
   }
   fundingMetrics: oso_fundingMetricsByProjectV1(
@@ -133,9 +134,7 @@ query MetricsForProject($projectId: String!) {
 """
 
 if __name__ == "__main__":
-    res = fetch_repo_metrics(
-        "https://github.com/prettier-solidity/prettier-plugin-solidity"
-    )
+    res = fetch_repo_metrics("https://github.com/ethereum/go-ethereum")
     from pprint import pprint
 
     pprint(res)
