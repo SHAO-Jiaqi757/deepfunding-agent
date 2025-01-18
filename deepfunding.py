@@ -240,13 +240,23 @@ def create_validator_node():
                 if analyzer not in already_revised
             ]
             already_revised.update(revision_needed)
-            return Command(
-                update={
-                    "analyzers_to_run": revision_needed,
-                    "validator_result": result,
-                    "already_revised": already_revised,
-                }
-            )
+            if len(revision_needed) > 0:
+                return Command(
+                    update={
+                        "analyzers_to_run": revision_needed,
+                        "validator_result": result,
+                        "already_revised": already_revised,
+                    }
+                )
+            else:
+                # If no analyzers need revision, run consensus
+                return Command(
+                    update={
+                        "analyzers_to_run": ["consensus"],
+                        "validator_result": result,
+                        "already_revised": already_revised,
+                    }
+                )
 
     return validator_node
 
@@ -271,11 +281,14 @@ def create_consensus_node():
                 "messages": state["messages"]
                 + [
                     HumanMessage(
-                        content=json.dumps(consensus_result.model_dump(), indent=2),
+                        content=consensus_result.model_dump_json(),
                         name="consensus",
                     )
                 ],
-                "consensus_data": consensus_result.model_dump(),
+                "consensus_data": {
+                    **consensus_result.model_dump(),
+                    **state["analyzer_results"],
+                },
             }
         )
 
