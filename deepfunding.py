@@ -404,6 +404,7 @@ def run_comparison(repo_a: Dict, repo_b: Dict) -> Dict:
         if event.get("consensus"):
             results = event["consensus"]["consensus_data"]
 
+    # client.update_run(run_id, outputs=results)
     results["trace_url"] = client.share_run(run_id)
     wait_for_all_tracers()
     logger.info(f"Final results: {results}")
